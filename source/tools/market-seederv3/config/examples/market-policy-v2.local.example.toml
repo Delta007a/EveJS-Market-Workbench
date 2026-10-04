@@ -1,0 +1,70 @@
+
+["input"]
+"static_data_dir" = "inputs/_local/gameStore/data"
+
+["output"]
+"database_path" = "user-data/candidates/unused-direct-output.sqlite"
+
+["source"]
+"index_url" = "https://data.everef.net/market-orders/index.json"
+"download_dir" = "inputs/snapshot"
+"user_agent" = "PublicEveJS market-seederv3/0.1"
+
+["import"]
+"order_filter" = "npc_only"
+"npc_order_duration_threshold_days" = 90
+"gate_on_npc_arbitrage" = false
+
+["price_manifest"]
+"path" = "data/price-manifest.json"
+"capture_missing_from_snapshot" = false
+"capture_missing_from_esi" = false
+"esi_prices_url" = "https://esi.evetech.net/latest/markets/prices/"
+"reference_solar_system_id" = 30000142
+
+["canonical_market"]
+"station_ids" = [60003760, 60008494, 60011866, 60004588, 60005686]
+"quantity" = 2147483647
+
+["market_safety"]
+"production_safety_factor" = 0.95
+"max_refine_yield" = 0.906
+"raw_ore_refine_share" = 0.75
+"compressed_ore_refine_share" = 0.68
+
+["index_seed"]
+"station_id" = 60003760
+"sell_multiplier" = 3.0
+"buy_multiplier" = 1.0
+"quantity" = 2147483647
+"pricing" = "recursive"
+"price_floor" = 100.0
+"max_unpriced_drops" = 25
+"leaf_price_source" = "capture-first"
+"defer_to_npc_catalog" = "conflicting-prices"
+"reject_adjusted_price_captures" = true
+"derive_compressed_from_source" = true
+"floor_cost_at_reprocessing_value" = true
+"reprocessing_floor_margin" = 0.001
+
+["junk_seed"]
+"enabled" = true
+"categories" = ["modules", "commodities", "charges", "drones", "decryptors"]
+"sell_multiplier" = 3.0
+"buy_multiplier" = 1.0
+"quantity" = 2147483647
+
+["history"]
+"enabled" = true
+"days" = 30
+
+["build"]
+"sqlite_cache_size_kib" = 262144
+"sqlite_page_size_bytes" = 32768
+"sqlite_worker_threads" = 24
+"insert_batch_rows" = 100000
+
+["policy"]
+"path" = "config/market-policy-v2.json"
+"lp_offer_catalog_path" = "inputs/lpStoreStaticOffers.json"
+"plan_preview_path" = "user-data/reports/preview.json"

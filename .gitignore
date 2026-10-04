@@ -1,0 +1,8 @@
+*.zip
+*.exe
+*.dll
+*.sqlite*
+**/target*/
+**/user-data/
+**/__pycache__/
+inputs/

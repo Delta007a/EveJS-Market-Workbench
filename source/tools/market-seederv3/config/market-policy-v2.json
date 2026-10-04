@@ -1,0 +1,739 @@
+{
+  "format_version": 1,
+  "catalog_contract": {
+    "sde_build": 3396210,
+    "fact_registry_version": 1
+  },
+  "profiles": [
+    {
+      "id": "battlecruiser",
+      "description": "V1 battlecruiser policy using existing recursive/core manifest cost.",
+      "sides": "buy_sell",
+      "sell": {
+        "source": "core_manifest_cost",
+        "multiplier": "1.16"
+      },
+      "buy": {
+        "source": "core_manifest_cost",
+        "multiplier": "0.78"
+      }
+    },
+    {
+      "id": "battleship",
+      "description": "V1 battleship policy using existing recursive/core manifest cost.",
+      "sides": "buy_sell",
+      "sell": {
+        "source": "core_manifest_cost",
+        "multiplier": "1.18"
+      },
+      "buy": {
+        "source": "core_manifest_cost",
+        "multiplier": "0.80"
+      }
+    },
+    {
+      "id": "bpo",
+      "description": "Ordinary eligible reusable T1 BPOs: exact eligible NPC minimum Sell, then positive finite SDE basePrice. NPC catalog eligibility is mandatory; basePrice alone cannot qualify. Sell x0.02 with 1,000 ISK floor; no synthetic Buy.",
+      "sides": "sell_only",
+      "sell": {
+        "source": "bpo_npc_or_base",
+        "multiplier": "0.02",
+        "floor": "1000.0"
+      }
+    },
+    {
+      "id": "bridge",
+      "description": "V1 Bridge allowlist. Exact accepted captured-market reference required; no source fallback. Current moon-resource groups are handled by their enabled Core route.",
+      "sides": "sell_only",
+      "sell": {
+        "source": "captured_market",
+        "multiplier": "1.02"
+      }
+    },
+    {
+      "id": "capital_structure_component",
+      "description": "V1 capital/structure component profile value; retained from TOML, with zero effective matches in the pinned V1 seed.",
+      "sides": "buy_sell",
+      "sell": {
+        "source": "core_manifest_cost",
+        "multiplier": "1.12"
+      },
+      "buy": {
+        "source": "core_manifest_cost",
+        "multiplier": "0.75"
+      }
+    },
+    {
+      "id": "command_center",
+      "description": "V1 source ladder: NPC minimum Sell, then positive finite SDE basePrice. No generic market/funded fallback and no synthetic Buy.",
+      "sides": "sell_only",
+      "sell": {
+        "source": "command_center_ladder",
+        "multiplier": "1.0"
+      }
+    },
+    {
+      "id": "compressed_ore",
+      "description": "V1 authoritative compressed ore policy. Existing ore-family normalization and safety remain code-owned; source is the existing core cost/manifest contract.",
+      "sides": "buy_sell",
+      "sell": {
+        "source": "core_manifest_cost",
+        "multiplier": "1.05"
+      },
+      "buy": {
+        "source": "core_manifest_cost",
+        "multiplier": "0.52"
+      }
+    },
+    {
+      "id": "core_general",
+      "description": "V1 Core general recursive/captured cost policy. Uses the existing cost and manifest authority contract; no adjusted-only ESI fallback.",
+      "sides": "buy_sell",
+      "sell": {
+        "source": "core_manifest_cost",
+        "multiplier": "1.12"
+      },
+      "buy": {
+        "source": "core_manifest_cost",
+        "multiplier": "0.70"
+      }
+    },
+    {
+      "id": "cruiser",
+      "description": "V1 cruiser policy using existing recursive/core manifest cost.",
+      "sides": "buy_sell",
+      "sell": {
+        "source": "core_manifest_cost",
+        "multiplier": "1.14"
+      },
+      "buy": {
+        "source": "core_manifest_cost",
+        "multiplier": "0.76"
+      }
+    },
+    {
+      "id": "destroyer",
+      "description": "V1 destroyer policy using existing recursive/core manifest cost.",
+      "sides": "buy_sell",
+      "sell": {
+        "source": "core_manifest_cost",
+        "multiplier": "1.12"
+      },
+      "buy": {
+        "source": "core_manifest_cost",
+        "multiplier": "0.74"
+      }
+    },
+    {
+      "id": "gas_ice_salvage",
+      "description": "V1 gas, ice and salvage policy using the existing core cost/manifest source contract.",
+      "sides": "buy_sell",
+      "sell": {
+        "source": "core_manifest_cost",
+        "multiplier": "1.08"
+      },
+      "buy": {
+        "source": "core_manifest_cost",
+        "multiplier": "0.58"
+      }
+    },
+    {
+      "id": "minerals",
+      "description": "V1 mineral policy using the existing core cost/manifest source contract.",
+      "sides": "buy_sell",
+      "sell": {
+        "source": "core_manifest_cost",
+        "multiplier": "1.05"
+      },
+      "buy": {
+        "source": "core_manifest_cost",
+        "multiplier": "0.62"
+      }
+    },
+    {
+      "id": "orca_freighter_structure",
+      "description": "V1 Orca, freighter and structure policy using existing recursive/core manifest cost.",
+      "sides": "buy_sell",
+      "sell": {
+        "source": "core_manifest_cost",
+        "multiplier": "1.20"
+      },
+      "buy": {
+        "source": "core_manifest_cost",
+        "multiplier": "0.80"
+      }
+    },
+    {
+      "id": "planetary_industry",
+      "description": "PI categories 42/43 use an exact accepted captured-market reference; missing capture does not trigger another price authority. Sell and Buy share that reference before independent multipliers.",
+      "sides": "buy_sell",
+      "sell": {
+        "source": "captured_market",
+        "multiplier": "1.02"
+      },
+      "buy": {
+        "source": "captured_market",
+        "multiplier": "0.65"
+      }
+    },
+    {
+      "id": "production_intermediate",
+      "description": "Exact V1 allowlist: 114 legacy plus 15 approved structure components. Both sides require successful guaranteed funded_cost; synthetic Buy is not an acquisition input.",
+      "sides": "buy_sell",
+      "sell": {
+        "source": "funded_cost",
+        "multiplier": "1.25"
+      },
+      "buy": {
+        "source": "funded_cost",
+        "multiplier": "0.95"
+      }
+    },
+    {
+      "id": "progression_npc",
+      "description": "V1 Progression NPC allowlist: eligible NPC catalog minimum Sell only. Missing NPC Sell is unresolved/dropped; no static base or generic source fallback.",
+      "sides": "sell_only",
+      "sell": {
+        "source": "npc_min_sell",
+        "multiplier": "1.0"
+      }
+    },
+    {
+      "id": "rare_deadspace_ded",
+      "description": "V1 deadspace/DED Rare Buy source. Exact reference/capture and only approved strict same-profile fallback; no static basePrice or fuzzy fallback.",
+      "sides": "buy_only",
+      "buy": {
+        "source": "rare_reference",
+        "multiplier": "0.65"
+      }
+    },
+    {
+      "id": "rare_faction_lp",
+      "description": "V1 faction/LP Rare Buy source. Exact snapshot/reference then accepted capture then approved same-family/profile sibling or funded anchor. Required gameplay items do not use basePrice; optional cosmetic/BPC omissions remain code-owned.",
+      "sides": "buy_only",
+      "buy": {
+        "source": "rare_reference",
+        "multiplier": "0.65"
+      }
+    },
+    {
+      "id": "rare_officer",
+      "description": "V1 officer Rare Buy source. Exact reference/capture and only approved strict same-profile fallback; no static basePrice or fuzzy fallback.",
+      "sides": "buy_only",
+      "buy": {
+        "source": "rare_reference",
+        "multiplier": "0.60"
+      }
+    },
+    {
+      "id": "rare_t2",
+      "description": "V1 finished T2 required Rare Buy source. Exact snapshot/reference then accepted capture, with only the code-owned strict funded fallback when eligible. No synthetic Sell; no static base or fuzzy fallback.",
+      "sides": "buy_only",
+      "buy": {
+        "source": "rare_reference",
+        "multiplier": "0.70"
+      }
+    },
+    {
+      "id": "raw_ore",
+      "description": "V1 raw ore policy. Existing cost/manifest authority and ore-family refine safety remain code-owned.",
+      "sides": "buy_sell",
+      "sell": {
+        "source": "core_manifest_cost",
+        "multiplier": "1.05"
+      },
+      "buy": {
+        "source": "core_manifest_cost",
+        "multiplier": "0.58"
+      }
+    },
+    {
+      "id": "reaction_formula",
+      "description": "Published reaction formulas: NPC minimum Sell, otherwise positive finite SDE basePrice under the formula-specific eligibility contract. Sell x0.001 with 1,000 ISK floor; no synthetic Buy.",
+      "sides": "sell_only",
+      "sell": {
+        "source": "bpo_npc_or_base",
+        "multiplier": "0.001",
+        "floor": "1000.0"
+      }
+    },
+    {
+      "id": "skillbook",
+      "description": "V1 ordered source ladder: NPC minimum Sell, exact snapshot reference, accepted capture, positive finite SDE basePrice, then the explicit fixed 5,000,000 ISK fallback. No synthetic Buy.",
+      "sides": "sell_only",
+      "sell": {
+        "source": "skillbook_ladder",
+        "multiplier": "1.0"
+      }
+    },
+    {
+      "id": "t1_module_ammo_rig",
+      "description": "V1 modules, charges and rigs policy using the existing core cost/manifest source contract.",
+      "sides": "buy_sell",
+      "sell": {
+        "source": "core_manifest_cost",
+        "multiplier": "1.12"
+      },
+      "buy": {
+        "source": "core_manifest_cost",
+        "multiplier": "0.72"
+      }
+    }
+  ],
+  "rules": [
+    {
+      "id": "approved_reusable_t1_bpo",
+      "description": "V1 NPC-eligible published reusable T1 BPO assignment",
+      "selector": {
+        "fact": "approved_reusable_bpo"
+      },
+      "priority": 1290,
+      "profile": "bpo"
+    },
+    {
+      "id": "bridge_exact_types",
+      "description": "V1 exact Bridge type allowlist",
+      "selector": {
+        "type_ids": [
+          25591,
+          25592,
+          25594,
+          25610,
+          25618,
+          25619,
+          25620,
+          25621,
+          25623,
+          33195,
+          57450
+        ]
+      },
+      "priority": 700,
+      "profile": "bridge"
+    },
+    {
+      "id": "bridge_groups_non_moon",
+      "description": "V1 Bridge groups after enabled moon-resource suppression",
+      "selector": {
+        "group_ids": [
+          333,
+          966,
+          1304
+        ]
+      },
+      "priority": 700,
+      "profile": "bridge"
+    },
+    {
+      "id": "command_center_group",
+      "description": "V1 Command Center group assignment",
+      "selector": {
+        "group_ids": [
+          1027
+        ]
+      },
+      "priority": 1100,
+      "profile": "command_center"
+    },
+    {
+      "id": "core_battlecruiser",
+      "description": "V1 battlecruiser group-name test",
+      "selector": {
+        "fact": "core_battlecruiser"
+      },
+      "priority": 350,
+      "profile": "battlecruiser"
+    },
+    {
+      "id": "core_battleship",
+      "description": "V1 battleship group-name test",
+      "selector": {
+        "fact": "core_battleship"
+      },
+      "priority": 340,
+      "profile": "battleship"
+    },
+    {
+      "id": "core_bucket",
+      "description": "V1 Core A-or-B eligibility (with category 17 suppressed), after earlier winning item rules; subtype facts override this general profile at higher priority.",
+      "selector": {
+        "fact": "core_bucket"
+      },
+      "priority": 300,
+      "profile": "core_general"
+    },
+    {
+      "id": "core_compressed_ore",
+      "description": "V1 authoritative compressed type profile",
+      "selector": {
+        "fact": "authoritative_compressed_ore"
+      },
+      "priority": 410,
+      "profile": "compressed_ore"
+    },
+    {
+      "id": "core_cruiser",
+      "description": "V1 cruiser group-name test",
+      "selector": {
+        "fact": "core_cruiser"
+      },
+      "priority": 320,
+      "profile": "cruiser"
+    },
+    {
+      "id": "core_destroyer",
+      "description": "V1 destroyer group-name test",
+      "selector": {
+        "fact": "core_destroyer"
+      },
+      "priority": 330,
+      "profile": "destroyer"
+    },
+    {
+      "id": "core_gas_ice_salvage",
+      "description": "V1 gas, ice product and natural salvage profile",
+      "selector": {
+        "fact": "core_gas_ice_salvage"
+      },
+      "priority": 370,
+      "profile": "gas_ice_salvage"
+    },
+    {
+      "id": "core_ice_ore",
+      "description": "V1 ice ore profile",
+      "selector": {
+        "fact": "core_ice_ore"
+      },
+      "priority": 420,
+      "profile": "gas_ice_salvage"
+    },
+    {
+      "id": "core_minerals",
+      "description": "V1 mineral group 18 profile",
+      "selector": {
+        "fact": "core_minerals"
+      },
+      "priority": 380,
+      "profile": "minerals"
+    },
+    {
+      "id": "core_orca_freighter_structure",
+      "description": "V1 Orca/freighter/structure profile",
+      "selector": {
+        "fact": "core_orca_freighter_structure"
+      },
+      "priority": 310,
+      "profile": "orca_freighter_structure"
+    },
+    {
+      "id": "core_raw_ore",
+      "description": "V1 raw ore profile",
+      "selector": {
+        "fact": "core_raw_ore"
+      },
+      "priority": 400,
+      "profile": "raw_ore"
+    },
+    {
+      "id": "core_t1_module_ammo_rig",
+      "description": "V1 category/group-name module, charge and rig profile",
+      "selector": {
+        "fact": "core_t1_module_ammo_rig"
+      },
+      "priority": 360,
+      "profile": "t1_module_ammo_rig"
+    },
+    {
+      "id": "direct_lp_reward",
+      "description": "V1 direct LP rewards expanded through published blueprint products",
+      "selector": {
+        "fact": "direct_lp_reward"
+      },
+      "priority": 570,
+      "profile": "rare_faction_lp"
+    },
+    {
+      "id": "exert_unseeded",
+      "description": "Exact Market V1 exclusion: EXERT Structure Conduit Coupler has no funded acquisition path",
+      "selector": {
+        "type_ids": [
+          49720
+        ]
+      },
+      "priority": 10000,
+      "sides": "unseeded"
+    },
+    {
+      "id": "finished_t2",
+      "description": "V1 finished-good T2 / meta 2 / invention-lineage Rare policy",
+      "selector": {
+        "fact": "finished_t2"
+      },
+      "priority": 550,
+      "profile": "rare_t2"
+    },
+    {
+      "id": "finished_t3_unseeded",
+      "description": "V1 early finished T3 rejection after explicit Bridge/Progression/Intermediate rescue",
+      "selector": {
+        "fact": "finished_t3"
+      },
+      "priority": 650,
+      "sides": "unseeded"
+    },
+    {
+      "id": "lp_blueprint_product",
+      "description": "V1 marketable finished product from directly rewarded published manufacturing blueprint",
+      "selector": {
+        "fact": "lp_blueprint_product"
+      },
+      "priority": 570,
+      "profile": "rare_faction_lp"
+    },
+    {
+      "id": "planetary_industry_categories",
+      "description": "V1 Planetary Resources and Planetary Commodities",
+      "selector": {
+        "category_ids": [
+          42,
+          43
+        ]
+      },
+      "priority": 800,
+      "profile": "planetary_industry"
+    },
+    {
+      "id": "production_intermediate_legacy_114",
+      "description": "V1 complete legacy exact 114 ProductionIntermediate set",
+      "selector": {
+        "type_ids": [
+          11475,
+          11476,
+          11478,
+          11481,
+          11482,
+          11483,
+          11484,
+          11486,
+          11530,
+          11531,
+          11532,
+          11533,
+          11534,
+          11535,
+          11536,
+          11537,
+          11538,
+          11539,
+          11540,
+          11541,
+          11542,
+          11543,
+          11544,
+          11545,
+          11547,
+          11548,
+          11549,
+          11550,
+          11551,
+          11552,
+          11553,
+          11554,
+          11555,
+          11556,
+          11557,
+          11558,
+          11688,
+          11689,
+          11690,
+          11691,
+          11692,
+          11693,
+          11694,
+          11695,
+          21009,
+          21011,
+          21013,
+          21017,
+          21019,
+          21021,
+          21023,
+          21025,
+          21027,
+          21029,
+          21035,
+          21037,
+          21039,
+          21041,
+          24558,
+          24560,
+          29039,
+          29041,
+          29043,
+          29045,
+          29049,
+          29051,
+          29053,
+          29055,
+          29059,
+          29061,
+          29065,
+          29067,
+          29069,
+          29071,
+          29073,
+          29075,
+          29079,
+          29081,
+          29085,
+          29089,
+          29091,
+          29093,
+          29095,
+          29097,
+          29101,
+          29103,
+          29107,
+          29109,
+          57470,
+          57471,
+          57472,
+          57473,
+          57474,
+          57475,
+          57476,
+          57477,
+          57478,
+          57479,
+          57480,
+          57481,
+          57482,
+          57483,
+          57484,
+          57485,
+          57486,
+          57487,
+          57488,
+          81063,
+          81064,
+          81065,
+          81066,
+          81067,
+          81068,
+          81069
+        ]
+      },
+      "priority": 900,
+      "profile": "production_intermediate"
+    },
+    {
+      "id": "production_intermediate_structure_components_15",
+      "description": "V1 exact approved Structure Component extension",
+      "selector": {
+        "type_ids": [
+          21947,
+          21949,
+          21951,
+          21953,
+          21955,
+          21957,
+          21959,
+          21961,
+          21963,
+          21965,
+          21967,
+          21969,
+          36956,
+          36957,
+          36958
+        ]
+      },
+      "priority": 900,
+      "profile": "production_intermediate"
+    },
+    {
+      "id": "progression_npc_groups",
+      "description": "V1 Progression NPC group allowlist",
+      "selector": {
+        "group_ids": [
+          4086
+        ]
+      },
+      "priority": 1000,
+      "profile": "progression_npc"
+    },
+    {
+      "id": "progression_npc_types",
+      "description": "V1 Progression NPC exact type allowlist",
+      "selector": {
+        "type_ids": [
+          41,
+          3685,
+          3687,
+          3812,
+          3814,
+          9850,
+          3773
+        ]
+      },
+      "priority": 1000,
+      "profile": "progression_npc"
+    },
+    {
+      "id": "published_reaction_formula",
+      "description": "V1 published reaction formula assignment",
+      "selector": {
+        "fact": "published_reaction_formula"
+      },
+      "priority": 1300,
+      "profile": "reaction_formula"
+    },
+    {
+      "id": "rare_deadspace_ded",
+      "description": "V1 meta group 6",
+      "selector": {
+        "fact": "rare_deadspace_ded"
+      },
+      "priority": 580,
+      "profile": "rare_deadspace_ded"
+    },
+    {
+      "id": "rare_faction_meta",
+      "description": "V1 meta group 3/4",
+      "selector": {
+        "fact": "rare_faction_lp"
+      },
+      "priority": 560,
+      "profile": "rare_faction_lp"
+    },
+    {
+      "id": "rare_officer",
+      "description": "V1 meta group 5",
+      "selector": {
+        "fact": "rare_officer"
+      },
+      "priority": 590,
+      "profile": "rare_officer"
+    },
+    {
+      "id": "skill_category",
+      "description": "V1 category 16 Skillbook assignment",
+      "selector": {
+        "category_ids": [
+          16
+        ]
+      },
+      "priority": 1200,
+      "profile": "skillbook"
+    },
+    {
+      "id": "special_reward_placeholder_hull",
+      "description": "V1 special reward placeholder hull",
+      "selector": {
+        "fact": "special_reward_placeholder_hull"
+      },
+      "priority": 600,
+      "profile": "rare_faction_lp"
+    }
+  ]
+}

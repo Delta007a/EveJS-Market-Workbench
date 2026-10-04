@@ -1,0 +1,87 @@
+{
+  "format": "evejs-market-community-preset-bundle",
+  "format_version": 1,
+  "presets": [
+    {
+      "id": "farmer-hardcore-v1",
+      "name": "Farmer Hardcore",
+      "file": "farmer-hardcore-v1.json",
+      "sha256": "fba4914120658e909fc2b15eda1ff43af04ebdf6f3038de041e978e7a4fd8e5c",
+      "summary": {
+        "sell": 4741,
+        "buy": 12703,
+        "both_sides": 4741,
+        "excluded": 215,
+        "unresolved_selected": 0
+      }
+    },
+    {
+      "id": "tq-galaxy-v1",
+      "name": "TQ Galaxy",
+      "file": "tq-galaxy-v1.json",
+      "sha256": "a9cd4d438801cb7cd48cb3c7ab1764fb4f19a146ba5ae193bb65cf1db3a26d92",
+      "summary": {
+        "sell": 12549,
+        "buy": 12677,
+        "both_sides": 12549,
+        "excluded": 241,
+        "unresolved_selected": 0
+      }
+    },
+    {
+      "id": "zero-to-hero-v1",
+      "name": "Zero to Hero",
+      "file": "zero-to-hero-v1.json",
+      "sha256": "e37de44a7740417aafaaba885104ed7d997d8887fc10f91d5c518388ecd77e79",
+      "summary": {
+        "sell": 2283,
+        "buy": 12703,
+        "both_sides": 2283,
+        "excluded": 215,
+        "unresolved_selected": 0
+      }
+    },
+    {
+      "id": "industrialist-v1",
+      "name": "Industrialist",
+      "file": "industrialist-v1.json",
+      "sha256": "c37d780feae91997c21c033c5045ae11866f5156890ad084495827af61f27476",
+      "summary": {
+        "sell": 3517,
+        "buy": 12703,
+        "both_sides": 3517,
+        "excluded": 215,
+        "unresolved_selected": 0
+      }
+    },
+    {
+      "id": "explorer-v1",
+      "name": "Explorer",
+      "file": "explorer-v1.json",
+      "sha256": "59ded6a486ebd05dc1d9ce63d4c2ceb3fbd49f9e77120a837824b81dc6eb2480",
+      "summary": {
+        "sell": 4100,
+        "buy": 12703,
+        "both_sides": 4100,
+        "excluded": 215,
+        "unresolved_selected": 0
+      }
+    },
+    {
+      "id": "solo-progression-v1",
+      "name": "Solo Progression",
+      "file": "solo-progression-v1.json",
+      "sha256": "cbd132488821ac521aaea2ed745a4ca503dcce91ec9eae65aafbf0d7664c9e37",
+      "summary": {
+        "sell": 6170,
+        "buy": 12710,
+        "both_sides": 6170,
+        "excluded": 208,
+        "unresolved_selected": 0
+      }
+    }
+  ],
+  "tq_reference_sha256": "28acf100fa9adbb4dd556d9ea9f60c84ed3d718c70bfb684260840615772d9e5",
+  "database_built": false,
+  "deployed": false
+}

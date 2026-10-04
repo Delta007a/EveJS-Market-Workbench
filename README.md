@@ -64,7 +64,13 @@ The EXE is unsigned, so Windows SmartScreen may warn. Verify the ZIP against its
 
 ## Source and attribution
 
-Corresponding Rust source, Cargo.lock, frontend source and community preset JSON files are included in the portable ZIP.
-The ZIP also includes the LICENSE, source build guide and data attribution.
-Large pinned pricing/static inputs are distributed in Release assets, not Git history.
+This repository contains the corresponding Rust backend and shared crate, Cargo.toml/Cargo.lock,
+`workbench-ui/`, configuration examples, Python scripts/tests and community preset JSON files.
+Start with [source/BUILD.md](source/BUILD.md) for compilation and offline runtime setup.
+
+Large pinned pricing/static datasets are excluded from Git history. They are included in the
+portable Release under `tools/marketworkbench/inputs/` and `tools/marketworkbench/data/`.
+Use the matching Release to obtain these inputs and verify `package-manifest.json` before
+running a source-built binary. A source checkout alone does not contain a runnable pricing dataset.
+See [DATA-SOURCES.md](DATA-SOURCES.md) and [LICENSE](LICENSE).
 EVE Online / Tranquility static and market data are CCP data; this is an independent EveJS add-on.

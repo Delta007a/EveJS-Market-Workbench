@@ -1,0 +1,23 @@
+
+["input"]
+"static_data_dir" = "inputs/_local/gameStore/data"
+
+["output"]
+"database_path" = "user-data/candidates/unused-direct-output.sqlite"
+
+["policy"]
+"preset" = "general_tq"
+"path" = "config/market-policy-general-tq-v1.json"
+"tq_snapshot_path" = "inputs/tq-market-reference.json"
+"tq_snapshot_sha256" = "28acf100fa9adbb4dd556d9ea9f60c84ed3d718c70bfb684260840615772d9e5"
+"ordinary_taxonomy_path" = "inputs/ordinary-taxonomy.json"
+"plan_preview_path" = "user-data/reports/preview.json"
+"lp_offer_catalog_path" = "inputs/lpStoreStaticOffers.json"
+
+["source"]
+"download_dir" = "inputs/snapshot"
+
+["price_manifest"]
+"path" = "data/price-manifest.json"
+"capture_missing_from_snapshot" = false
+"capture_missing_from_esi" = false
