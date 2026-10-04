@@ -30,6 +30,11 @@ pub struct InstallRequest {
     pub server_stopped: bool,
 }
 
+struct TargetGuard {
+    file: File,
+    sidecars: Vec<(PathBuf, File)>,
+}
+
 struct Destination {
     root: PathBuf,
     config: PathBuf,
@@ -133,9 +138,11 @@ impl Targets {
             "config_sha256":destination.config_sha256,"database_path":display(&destination.database),
             "candidate_sha256":source_sha,"candidate_bytes":source.metadata()?.len(),"existing_database":current,
             "replaces_existing":current["exists"] == true,"audit_passed":true,
-            "warnings":["Stop the target market-server and EveJS before installing. Workbench does not stop or start services.",
+            "warnings":["Stop the target market-server and close database viewers before installing. Workbench does not stop or start services.",
                 "Replacing a database resets that market's player orders, events and remaining stock. An existing database is backed up first.",
-                "The original Workbench candidate remains unchanged."]});
+                "The original Workbench candidate remains unchanged.",
+                "If a stopped database has leftover WAL/SHM, installation backs up the complete state and lets SQLite checkpoint it. Preview does not change the database."],
+            "wal_recovery_required":!current["sidecars"].as_array().is_none_or(|s|s.is_empty())});
         preview["preview_sha256"] = json!(preview_sha(&preview)?);
         Ok(preview)
     }
@@ -148,7 +155,7 @@ impl Targets {
     ) -> Result<Value> {
         ensure!(
             request.server_stopped,
-            "Confirm that the target market-server and EveJS are stopped"
+            "Confirm that market-server is stopped and database viewers are closed"
         );
         let expected = self.preview(dir, candidate_id, &request.target_id)?;
         ensure!(
@@ -174,7 +181,7 @@ impl Targets {
             path: lock_path,
             file: Some(lock),
         };
-        let (current, mut old) = destination_state(&destination.database)?;
+        let (mut current, mut old) = destination_state(&destination.database)?;
         ensure!(
             current == expected["existing_database"],
             "Destination changed; review installation again"
@@ -201,7 +208,39 @@ impl Targets {
             hash(&mut File::open(&staging)?)? == copied_sha,
             "Copied database verification failed; original database preserved"
         );
-        let backup = if let Some(ref mut file) = old {
+        let mut raw_backup = None;
+        let mut wal_recovered = false;
+        if old.as_ref().is_some_and(|guard| !guard.sidecars.is_empty()) {
+            // Preserve DB + WAL + SHM under Windows sharing guards before SQLite
+            // touches anything. A pending WAL must never simply be deleted.
+            let raw_path = parent.join(format!("market.sqlite.wal-backup-{stamp}"));
+            backup_state(&raw_path, old.as_mut().unwrap(), &current)?;
+            raw_backup = Some(raw_path);
+            drop(old.take());
+            let recovered_sha = checkpoint_stopped_database(&destination.database, &current)
+                .context("Cannot finalize stopped database WAL; full recovery backup preserved, candidate not installed")?;
+            let (recovered_state, recovered_guard) = destination_state(&destination.database)?;
+            let mut recovered_guard = recovered_guard.context("Recovered database disappeared")?;
+            ensure!(recovered_state["sha256"] == recovered_sha,
+                "Database changed after checkpoint; review installation again");
+            // SQLite EXCLUSIVE mode may leave unused SHM behind. Under the
+            // reacquired main/sidecar guards, archive it rather than deleting it.
+            for (path, handle) in &recovered_guard.sidecars {
+                ensure!(!path.to_string_lossy().ends_with("-wal") || handle.metadata()?.len() == 0,
+                    "New WAL data appeared after checkpoint; stop database users and review again");
+            }
+            for (path, _) in &recovered_guard.sidecars {
+                let archive = raw_backup.as_ref().unwrap().join(format!("checkpoint-{}",path.file_name().unwrap().to_string_lossy()));
+                fs::rename(path, archive).context("Cannot archive finalized WAL/SHM; database not replaced")?;
+            }
+            recovered_guard.sidecars.clear();
+            current = recovered_state;
+            current["sidecars"] = json!([]);
+            old = Some(recovered_guard);
+            wal_recovered = true;
+        }
+        let backup = if let Some(ref mut guard) = old {
+            let file = &mut guard.file;
             let backup_path = parent.join(format!(
                 "{}.backup-{stamp}",
                 destination.database.file_name().unwrap().to_string_lossy()
@@ -224,13 +263,16 @@ impl Targets {
             self.destination(&request.target_id)?.config_sha256 == destination.config_sha256,
             "Server configuration changed; review installation again"
         );
+        ensure!(sidecars(&destination.database).iter().all(|p| !p.exists()),
+            "WAL/SHM reappeared; stop database users and review installation again");
         replace_database(&staging, &destination.database, old.is_some()).context(
             "Could not install database; stop market-server and close all database viewers",
         )?;
         drop(old);
         let mut result = json!({"installed":true,"candidate_id":candidate_id,"target_id":request.target_id,
             "database_path":display(&destination.database),"market_sha256":copied_sha,"bytes":source.metadata()?.len(),
-            "backup_path":backup.as_ref().map(|p|display(p)),"installed_at_unix_ns":stamp,
+            "backup_path":backup.as_ref().map(|p|display(p)),
+            "raw_wal_backup_path":raw_backup.as_ref().map(|p|display(p)),"wal_recovered":wal_recovered,"installed_at_unix_ns":stamp,
             "config_path":display(&destination.config),"config_sha256":destination.config_sha256,
             "services_started":false,"services_stopped":false,"candidate_preserved":true,
             "next_step":"StartMarketServer.bat in the selected EveJS folder will now use this database."});
@@ -374,14 +416,12 @@ fn candidate(dir: &Path, id: &str) -> Result<File> {
     Ok(file)
 }
 
-fn destination_state(path: &Path) -> Result<(Value, Option<File>)> {
-    for sidecar in sidecars(path) {
-        ensure!(
-            !sidecar.exists(),
-            "Target has SQLite WAL/SHM state. Stop market-server and close database viewers before installing; do not delete pending WAL data."
-        );
-    }
+fn destination_state(path: &Path) -> Result<(Value, Option<TargetGuard>)> {
     if !path.exists() {
+        ensure!(
+            sidecars(path).iter().all(|p| !p.exists()),
+            "WAL/SHM exists without a database; preserve these files and recover the database first"
+        );
         return Ok((json!({"exists":false}), None));
     }
     let mut file = destination_guard(path)?;
@@ -392,11 +432,155 @@ fn destination_state(path: &Path) -> Result<(Value, Option<File>)> {
         &header == b"SQLite format 3\0",
         "Existing target is not a SQLite database"
     );
+    let mut guards = Vec::new();
+    let mut states = Vec::new();
+    for sidecar in sidecars(path) {
+        if !sidecar.exists() {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(&sidecar)?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            ensure!(
+                metadata.file_attributes() & 0x400 == 0,
+                "Reparse WAL/SHM paths are not allowed"
+            );
+        }
+        ensure!(
+            metadata.is_file() && !metadata.file_type().is_symlink(),
+            "Invalid WAL/SHM file"
+        );
+        let mut handle = exclusive_read(&sidecar)?;
+        let wal = sidecar.to_string_lossy().ends_with("-wal");
+        if wal && handle.metadata()?.len() != 0 {
+            let mut magic = [0u8; 4];
+            handle
+                .read_exact(&mut magic)
+                .context("Invalid WAL header; preserve it for recovery")?;
+            ensure!(
+                handle.metadata()?.len() >= 32
+                    && matches!(u32::from_be_bytes(magic), 0x377f0682 | 0x377f0683),
+                "Invalid WAL header; preserve it for recovery"
+            );
+        }
+        if !wal {
+            ensure!(
+                handle.metadata()?.len() % 32768 == 0,
+                "Invalid SHM size; preserve it for recovery"
+            );
+        }
+        states.push(json!({"kind":if wal {"wal"} else {"shm"},"bytes":handle.metadata()?.len(),"sha256":hash(&mut handle)?}));
+        guards.push((sidecar, handle));
+    }
     let sha = hash(&mut file)?;
     Ok((
-        json!({"exists":true,"bytes":file.metadata()?.len(),"sha256":sha}),
-        Some(file),
+        json!({"exists":true,"bytes":file.metadata()?.len(),"sha256":sha,"sidecars":states}),
+        Some(TargetGuard {
+            file,
+            sidecars: guards,
+        }),
     ))
+}
+
+fn backup_state(dir: &Path, guard: &mut TargetGuard, state: &Value) -> Result<()> {
+    fs::create_dir(dir)?;
+    // These names form an independently recoverable SQLite DB/WAL/SHM set.
+    for (name, input, expected) in std::iter::once((
+        "market.sqlite".to_owned(),
+        &mut guard.file,
+        state["sha256"].clone(),
+    ))
+    .chain(
+        guard
+            .sidecars
+            .iter_mut()
+            .zip(state["sidecars"].as_array().unwrap())
+            .map(|((path, file), info)| {
+                (
+                    if path.to_string_lossy().ends_with("-wal") {
+                        "market.sqlite-wal"
+                    } else {
+                        "market.sqlite-shm"
+                    }
+                    .to_owned(),
+                    file,
+                    info["sha256"].clone(),
+                )
+            }),
+    ) {
+        let target = dir.join(name);
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)?;
+        let sha = copy_and_hash(input, &mut output)?;
+        drop(output);
+        ensure!(
+            json!(sha) == expected && hash(&mut File::open(&target)?)? == sha,
+            "Recovery backup verification failed; original DB/WAL/SHM preserved"
+        );
+    }
+    let mut receipt = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dir.join("state.json"))?;
+    receipt.write_all(&serde_json::to_vec_pretty(state)?)?;
+    receipt.sync_all()?;
+    Ok(())
+}
+
+fn checkpoint_stopped_database(path: &Path, expected: &Value) -> Result<String> {
+    // Explicit installation only. SQLite's own exclusive locks protect recovery;
+    // Windows guards are reacquired afterwards before the atomic replacement.
+    let conn = rusqlite::Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.busy_timeout(std::time::Duration::ZERO)?;
+    conn.execute_batch("PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE; COMMIT;")
+        .context("Database is busy; stop market-server and close database viewers")?;
+    ensure!(
+        json!(hash(&mut File::open(path)?)?) == expected["sha256"],
+        "Database changed before WAL recovery; review installation again"
+    );
+    let wal_path = sidecars(path)[0].clone();
+    if let Some(wal) = expected["sidecars"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["kind"] == "wal")
+    {
+        ensure!(
+            wal_path.exists() && json!(hash(&mut File::open(&wal_path)?)?) == wal["sha256"],
+            "WAL changed before recovery; review installation again"
+        );
+    } else {
+        ensure!(
+            !wal_path.exists() || wal_path.metadata()?.len() == 0,
+            "New WAL data appeared; review installation again"
+        );
+    }
+    let mut check = conn.prepare("PRAGMA quick_check")?;
+    let results = check
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(check);
+    ensure!(
+        results == ["ok"],
+        "Database integrity check failed; recovery backup preserved"
+    );
+    let (busy, _, _): (i64, i64, i64) =
+        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?;
+    ensure!(
+        busy == 0,
+        "WAL checkpoint is busy; database was not replaced"
+    );
+    let recovered_sha = hash(&mut File::open(path)?)?;
+    conn.close().map_err(|(_,e)|e).context("Cannot close recovered database")?;
+    Ok(recovered_sha)
 }
 
 fn exclusive_read(path: &Path) -> Result<File> {
@@ -808,6 +992,207 @@ mod tests {
             fs::remove_file(&sidecar).unwrap();
         }
     }
+
+    fn pending_wal_fixture(f: &Fixture) -> Vec<u8> {
+        fs::create_dir_all(f.db.parent().unwrap()).unwrap();
+        let donor = f.root.join("donor.sqlite");
+        let c = rusqlite::Connection::open(&donor).unwrap();
+        c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE player_data(v TEXT); INSERT INTO player_data VALUES('base'); PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        c.execute("INSERT INTO player_data VALUES('committed in WAL')", [])
+            .unwrap();
+        fs::copy(&donor, &f.db).unwrap();
+        for (src, dst) in sidecars(&donor).iter().zip(sidecars(&f.db)) {
+            fs::copy(src, dst).unwrap();
+        }
+        let pending = fs::read(sidecars(&f.db)[0].clone()).unwrap();
+        assert!(!pending.is_empty());
+        drop(c); // Only the separate donor is closed; target retains crash-style files.
+        pending
+    }
+
+    #[test]
+    fn orphan_empty_wal_and_shm_preview_is_read_only_and_install_succeeds() {
+        let f = Fixture::new();
+        let bytes = f.existing();
+        fs::write(&sidecars(&f.db)[0], []).unwrap();
+        fs::write(&sidecars(&f.db)[1], vec![0u8; 32768]).unwrap();
+        let p = f.preview();
+        assert_eq!(p["wal_recovery_required"], true);
+        assert_eq!(fs::read(&f.db).unwrap(), bytes);
+        assert_eq!(fs::metadata(&sidecars(&f.db)[1]).unwrap().len(), 32768);
+        let r = f
+            .targets
+            .install(&f.dir, "fixture", &f.request(&p))
+            .unwrap();
+        assert_eq!(r["wal_recovered"], true);
+        assert_eq!(fs::read(r["backup_path"].as_str().unwrap()).unwrap(), bytes);
+        assert!(sidecars(&f.db).iter().all(|p| !p.exists()));
+        assert_eq!(
+            fs::read(&f.db).unwrap(),
+            fs::read(f.dir.join("market.sqlite")).unwrap()
+        );
+    }
+
+    #[test]
+    fn pending_wal_install_preserves_committed_player_data_in_complete_backup() {
+        let f = Fixture::new();
+        let wal = pending_wal_fixture(&f);
+        let before = fs::read(&f.db).unwrap();
+        let shm = fs::read(&sidecars(&f.db)[1]).unwrap();
+        let p = f.preview();
+        assert_eq!(fs::read(&f.db).unwrap(), before);
+        assert_eq!(fs::read(&sidecars(&f.db)[0]).unwrap(), wal);
+        assert_eq!(fs::read(&sidecars(&f.db)[1]).unwrap(), shm);
+        let r = f
+            .targets
+            .install(&f.dir, "fixture", &f.request(&p))
+            .unwrap();
+        let raw = Path::new(r["raw_wal_backup_path"].as_str().unwrap());
+        assert_eq!(fs::read(raw.join("market.sqlite")).unwrap(), before);
+        assert_eq!(fs::read(raw.join("market.sqlite-wal")).unwrap(), wal);
+        assert_eq!(fs::read(raw.join("market.sqlite-shm")).unwrap(), shm);
+        let backup = rusqlite::Connection::open(r["backup_path"].as_str().unwrap()).unwrap();
+        let data = backup
+            .prepare("SELECT v FROM player_data ORDER BY rowid")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(data, ["base", "committed in WAL"]);
+        assert_eq!(
+            backup
+                .query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "ok"
+        );
+        assert!(sidecars(&f.db).iter().all(|p| !p.exists()));
+        assert_eq!(
+            fs::read(&f.db).unwrap(),
+            fs::read(f.dir.join("market.sqlite")).unwrap()
+        );
+    }
+
+    #[test]
+    fn live_wal_connection_blocks_preview_and_preserves_all_data() {
+        let f = Fixture::new();
+        pending_wal_fixture(&f);
+        let c = rusqlite::Connection::open(&f.db).unwrap();
+        c.execute("INSERT INTO player_data VALUES('still active')", [])
+            .unwrap();
+        assert!(
+            f.targets
+                .preview(&f.dir, "fixture", "evejs-1")
+                .unwrap_err()
+                .to_string()
+                .contains("busy")
+        );
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM player_data", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            3
+        );
+    }
+
+    #[test]
+    fn sidecar_change_invalidates_install_confirmation() {
+        let f = Fixture::new();
+        pending_wal_fixture(&f);
+        let p = f.preview();
+        let mut shm = fs::read(&sidecars(&f.db)[1]).unwrap();
+        shm[100] ^= 1;
+        fs::write(&sidecars(&f.db)[1], &shm).unwrap();
+        let before = fs::read(&f.db).unwrap();
+        assert!(
+            f.targets
+                .install(&f.dir, "fixture", &f.request(&p))
+                .unwrap_err()
+                .to_string()
+                .contains("changed")
+        );
+        assert_eq!(fs::read(&f.db).unwrap(), before);
+        assert_eq!(fs::read(&sidecars(&f.db)[1]).unwrap(), shm);
+    }
+
+    #[test]
+    fn unconfirmed_wal_install_never_checkpoints() {
+        let f = Fixture::new();
+        let wal = pending_wal_fixture(&f);
+        let p = f.preview();
+        let mut req = f.request(&p);
+        req.server_stopped = false;
+        assert!(f.targets.install(&f.dir, "fixture", &req).is_err());
+        req.server_stopped = true;
+        req.confirm_replace = false;
+        assert!(f.targets.install(&f.dir, "fixture", &req).is_err());
+        assert_eq!(fs::read(&sidecars(&f.db)[0]).unwrap(), wal);
+    }
+
+    #[test]
+    fn corrupt_sqlite_with_wal_blocks_checkpoint_and_keeps_recovery_backup() {
+        let f = Fixture::new();
+        f.existing();
+        let mut bad = fs::read(&f.db).unwrap();
+        bad[100..120].fill(255);
+        fs::write(&f.db, &bad).unwrap();
+        fs::write(&sidecars(&f.db)[0], []).unwrap();
+        let p = f.preview();
+        assert!(
+            f.targets
+                .install(&f.dir, "fixture", &f.request(&p))
+                .is_err()
+        );
+        assert_eq!(fs::read(&f.db).unwrap(), bad);
+        let raw = fs::read_dir(f.db.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .contains("wal-backup-")
+            })
+            .unwrap();
+        assert_eq!(fs::read(raw.join("market.sqlite")).unwrap(), bad);
+        assert!(raw.join("market.sqlite-wal").exists());
+    }
+
+    #[test]
+    fn busy_checkpoint_rejects_and_raw_backup_remains_recoverable() {
+        let f = Fixture::new();
+        pending_wal_fixture(&f);
+        let (state, guard) = destination_state(&f.db).unwrap();
+        drop(guard);
+        let c = rusqlite::Connection::open(&f.db).unwrap();
+        c.execute_batch("BEGIN; SELECT * FROM player_data;")
+            .unwrap();
+        assert!(checkpoint_stopped_database(&f.db, &state).is_err());
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM player_data", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn orphan_shm_without_wal_can_be_closed_without_touching_data() {
+        let f = Fixture::new();
+        let before = f.existing();
+        fs::write(&sidecars(&f.db)[1], vec![0u8; 32768]).unwrap();
+        let p = f.preview();
+        let r = f
+            .targets
+            .install(&f.dir, "fixture", &f.request(&p))
+            .unwrap();
+        assert_eq!(
+            fs::read(r["backup_path"].as_str().unwrap()).unwrap(),
+            before
+        );
+        assert!(sidecars(&f.db).iter().all(|p| !p.exists()));
+    }
+
     #[test]
     fn candidate_with_pending_wal_is_not_copied() {
         let f = Fixture::new();

@@ -26,3 +26,9 @@ requires explicit confirmation. Workbench does not start or stop gameplay servic
 The previous 1.3 community-presets Release keeps its original archive layout;
 the single-folder layout starts with **1.3.1**. Keep your old `user-data` folder
 when updating and copy it into the new MarketWorkbench folder to retain your presets.
+
+## 1.3.2 installer fix
+
+Stopped servers can leave SQLite journals behind. Workbench now backs up and
+safely finalizes this state during explicitly confirmed installation. Active
+servers/database viewers still block replacement. Pricing, presets and data are unchanged.

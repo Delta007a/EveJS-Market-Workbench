@@ -71,7 +71,7 @@ def main():
             relative = path.relative_to(app).as_posix()
             identities[relative] = {'bytes': path.stat().st_size, 'sha256': sha(path)}
     manifest = {'format': 'evejs-market-workbench-portable', 'format_version': 1,
-                'release': '1.3.1', 'layout_version': 2,
+                'release': '1.3.2', 'layout_version': 2,
                 'installation': 'EveJS/tools/MarketWorkbench', 'files': identities}
     (app / 'package-manifest.json').write_text(json.dumps(manifest, sort_keys=True, indent=2)+'\n', encoding='utf-8')
     args.zip.parent.mkdir(parents=True, exist_ok=True)

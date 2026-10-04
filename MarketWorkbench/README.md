@@ -46,9 +46,14 @@ See that directory's README for their descriptions.
 
 Save your preset, select **Build Market Database**, then **Verify Market Database**.
 Builds are separate files in `user-data/candidates/`; your gameplay market is unchanged.
-**Install into EveJS** is a separate, explicitly confirmed action. Stop the target EveJS
-and market-server first. The previous market DB is backed up before replacement.
+**Install into EveJS** is a separate, explicitly confirmed action. Stop the target market-server and close database viewers first. EveJS itself
+can remain running; its market is unavailable while market-server is stopped. The previous market DB is backed up before replacement.
 Neither the build nor verification automatically installs anything.
+
+Version 1.3.2 handles leftover SQLite WAL/SHM after a stopped server. Installation
+first saves the complete database and journal, checks integrity and lets SQLite
+finalize committed data. It also keeps a standalone previous-database backup.
+Active database users still block installation; Workbench never stops them.
 
 ## Updates and Windows
 

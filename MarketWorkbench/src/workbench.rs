@@ -1357,7 +1357,7 @@ fn route(app: &App, method: &str, path: &str, query: &str, body: &Value) -> Resu
     }
     if method == "GET" && path == "/api/v1/health" {
         return Ok(
-            json!({"ok":true,"bind":"127.0.0.1","storage":app.storage,"workbench_version":"1.3",
+            json!({"ok":true,"bind":"127.0.0.1","storage":app.storage,"workbench_version":"1.3.2",
                 "tq_snapshot":{"capture_id":app.tq.capture_id,"captured_at":app.tq.captured_at,"aggregation":app.tq.aggregation}}),
         );
     }
