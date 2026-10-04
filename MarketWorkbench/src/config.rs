@@ -1531,13 +1531,13 @@ mod tests {
     #[test]
     fn shipped_example_local_and_docker_configs_have_role_profile_parity() {
         let example =
-            SeederConfig::from_toml_str(include_str!("../config/market-seederv3.example.toml"))
+            SeederConfig::from_toml_str(include_str!("../config/fixtures/legacy.example.toml"))
                 .expect("example config validates");
         let local =
-            SeederConfig::from_toml_str(include_str!("../config/market-seederv3.local.toml"))
+            SeederConfig::from_toml_str(include_str!("../config/fixtures/legacy.local.toml"))
                 .expect("local config validates");
         let docker =
-            SeederConfig::from_toml_str(include_str!("../../../docker/market-seed-v3.toml"))
+            SeederConfig::from_toml_str(include_str!("../config/fixtures/legacy.docker.toml"))
                 .expect("Docker config validates");
 
         for candidate in [&local, &docker] {
@@ -1666,7 +1666,7 @@ mod tests {
 
     #[test]
     fn shipped_example_config_matches_the_defaults() {
-        let raw = include_str!("../config/market-seederv3.example.toml");
+        let raw = include_str!("../config/fixtures/legacy.example.toml");
         let example = SeederConfig::from_toml_str(raw).expect("example config must be valid");
         let defaults = SeederConfig::default();
 
@@ -2033,7 +2033,7 @@ mod tests {
     #[test]
     fn the_shipped_example_config_matches_the_built_in_defaults_for_the_pricing_rules() {
         let example = SeederConfig::from_toml_str(
-            &std::fs::read_to_string("config/market-seederv3.example.toml")
+            &std::fs::read_to_string("config/fixtures/legacy.example.toml")
                 .expect("the example config ships with the crate"),
         )
         .expect("the example config is valid");

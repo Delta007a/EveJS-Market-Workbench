@@ -5,4 +5,7 @@
 **/target*/
 **/user-data/
 **/__pycache__/
-inputs/
+MarketWorkbench/inputs/
+MarketWorkbench/data/
+MarketWorkbench/licenses/
+MarketWorkbench/package-manifest.json

@@ -7,7 +7,7 @@ NPC acquisition and linked T1 quote sources.
 ## How to open
 
 In the portable package, click **Import Preset** and select one of the six JSON
-files from `tools\marketworkbench\presets\community-v1\` in your EveJS folder
+files from `tools\MarketWorkbench\presets\community-v1\` in your EveJS folder
 (or `presets\community-v1` relative to the Workbench folder). Review the summary
 and save the new user copy. These presets are not preloaded into your user storage. Item Policy, Quick Setup,
 exact rules, Distribution and distribution seed are included. The files contain
