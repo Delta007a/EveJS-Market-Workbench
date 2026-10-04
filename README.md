@@ -52,15 +52,15 @@ Get-FileHash .\MarketWorkbench-1.3-community-presets-v1-portable-win-x64-final.z
 Compare it with the `.sha256` text. Individual file identities are listed in
 `tools/marketworkbench/package-manifest.json`.
 
-## Русский — быстрый старт
+## Quick start checklist
 
-**Скачать последний Release → распаковать весь ZIP в корень EveJS → запустить StartMarketWorkbench.bat.**
-Дождитесь `Market Workbench is ready: http://127.0.0.1:8765/`, затем откройте этот адрес.
-Начните с **TQ-like Market — Recommended** и **Edit a Copy**. **Legacy Market** — старый вариант.
-Community presets импортируются из `tools\marketworkbench\presets\community-v1\`.
-Короткая инструкция — `README-FIRST.txt`, полная — `tools\README.md`.
-База строится отдельно; установка в игру требует отдельного подтверждения.
-EXE не подписан: SmartScreen может предупредить. Рядом с ZIP есть SHA256.
+**Download the latest Release → extract the entire ZIP into the EveJS root → run StartMarketWorkbench.bat.**
+Wait for `Market Workbench is ready: http://127.0.0.1:8765/`, then open that address.
+Start with **TQ-like Market — Recommended** and **Edit a Copy**. **Legacy Market** is the older variant.
+Import community presets from `tools\marketworkbench\presets\community-v1\`.
+Read `README-FIRST.txt` for the short guide or `tools\README.md` for the full instructions.
+Building creates a separate database; installing it into gameplay requires explicit confirmation.
+The EXE is unsigned, so Windows SmartScreen may warn. Verify the ZIP against its `.sha256` asset.
 
 ## Source and attribution
 
