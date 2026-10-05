@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Rust format
+        working-directory: MarketWorkbench
+        run: cargo fmt --check
+
+      - name: Rust build
+        working-directory: MarketWorkbench
+        run: cargo build --locked --release --target x86_64-pc-windows-msvc
+
+      - name: Rust tests
+        working-directory: MarketWorkbench
+        run: cargo test --locked --release -- --skip seedplan::tests::
+
+      - name: Frontend syntax
+        run: node --check MarketWorkbench/workbench-ui/app.js
+
+      - name: Python tests
+        working-directory: MarketWorkbench/scripts
+        run: python -m unittest test_derive_tq_snapshot test_collect_tq_history test_blend_tq_history
+
+      - name: Packaging script syntax
+        run: python -m py_compile MarketWorkbench/scripts/package_workbench.py

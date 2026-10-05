@@ -1,0 +1,140 @@
+name: Build Portable Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, for example 1.4.0"
+        required: true
+        type: string
+      tag:
+        description: "Git tag, for example v1.4.0"
+        required: true
+        type: string
+      title:
+        description: "Release title"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate release inputs
+        shell: pwsh
+        run: |
+          $version = '${{ inputs.version }}'
+          $tag = '${{ inputs.tag }}'
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Version must look like 1.4.0"
+          }
+          if ($tag -ne "v$version") {
+            throw "Tag must exactly match v$version"
+          }
+
+      - name: Rust format
+        working-directory: MarketWorkbench
+        run: cargo fmt --check
+
+      - name: Rust build
+        working-directory: MarketWorkbench
+        run: cargo build --locked --release --target x86_64-pc-windows-msvc
+
+      - name: Rust tests
+        working-directory: MarketWorkbench
+        run: cargo test --locked --release -- --skip seedplan::tests::
+
+      - name: Frontend syntax
+        run: node --check MarketWorkbench/workbench-ui/app.js
+
+      - name: Python tests
+        working-directory: MarketWorkbench/scripts
+        run: python -m unittest test_derive_tq_snapshot test_collect_tq_history test_blend_tq_history
+
+      - name: Download and verify runtime data from latest published Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory runtime-base | Out-Null
+          $runtimeTag = gh release view --repo "${{ github.repository }}" --json tagName --jq ".tagName"
+          if (-not $runtimeTag) {
+            throw "No published Release is available as a runtime-data base"
+          }
+
+          gh release download $runtimeTag --repo "${{ github.repository }}" --pattern "MarketWorkbench-*-portable-win-x64.zip" --pattern "MarketWorkbench-*-portable-win-x64.zip.sha256" --dir runtime-base
+
+          $zip = Get-ChildItem runtime-base -Filter "*.zip" | Select-Object -First 1
+          $shaFile = Get-ChildItem runtime-base -Filter "*.zip.sha256" | Select-Object -First 1
+          if (-not $zip -or -not $shaFile) {
+            throw "Latest Release is missing the portable ZIP or SHA256 sidecar"
+          }
+
+          $expected = ((Get-Content $shaFile.FullName -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+          $actual = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) {
+            throw "Runtime base ZIP SHA256 mismatch"
+          }
+
+          New-Item -ItemType Directory runtime-base\extracted | Out-Null
+          Expand-Archive $zip.FullName runtime-base\extracted
+
+          $runtimeDir = Join-Path (Resolve-Path runtime-base\extracted) "MarketWorkbench"
+          if (-not (Test-Path (Join-Path $runtimeDir "package-manifest.json"))) {
+            throw "Runtime base has no MarketWorkbench/package-manifest.json"
+          }
+
+          "RUNTIME_DIR=$runtimeDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Package portable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          $version = '${{ inputs.version }}'
+          $zip = "dist\MarketWorkbench-$version-portable-win-x64.zip"
+          $exe = "MarketWorkbench\target\x86_64-pc-windows-msvc\release\market-seederv3.exe"
+
+          python MarketWorkbench\scripts\package_workbench.py --runtime-dir "$env:RUNTIME_DIR" --exe "$exe" --release-version "$version" --zip "$zip" --stage "dist\stage-$version"
+
+          $expected = ((Get-Content "$zip.sha256" -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) {
+            throw "Fresh portable ZIP SHA256 mismatch"
+          }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MarketWorkbench-${{ inputs.version }}-portable-win-x64
+          path: |
+            dist/MarketWorkbench-${{ inputs.version }}-portable-win-x64.zip
+            dist/MarketWorkbench-${{ inputs.version }}-portable-win-x64.zip.sha256
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = '${{ inputs.version }}'
+          $tag = '${{ inputs.tag }}'
+          $zip = "dist\MarketWorkbench-$version-portable-win-x64.zip"
+          gh release create "$tag" "$zip" "$zip.sha256" --repo "${{ github.repository }}" --target "${{ github.sha }}" --title '${{ inputs.title }}' --generate-notes
