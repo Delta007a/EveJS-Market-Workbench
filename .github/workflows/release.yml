@@ -7,14 +7,6 @@ on:
         description: "Version, for example 1.4.0"
         required: true
         type: string
-      tag:
-        description: "Git tag, for example v1.4.0"
-        required: true
-        type: string
-      title:
-        description: "Release title"
-        required: true
-        type: string
 
 permissions:
   contents: write
@@ -38,16 +30,12 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Validate release inputs
+      - name: Validate version
         shell: pwsh
         run: |
           $version = '${{ inputs.version }}'
-          $tag = '${{ inputs.tag }}'
           if ($version -notmatch '^\d+\.\d+\.\d+$') {
             throw "Version must look like 1.4.0"
-          }
-          if ($tag -ne "v$version") {
-            throw "Tag must exactly match v$version"
           }
 
       - name: Rust format
@@ -135,6 +123,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = '${{ inputs.version }}'
-          $tag = '${{ inputs.tag }}'
+          $tag = "v$version"
+          $title = "Market Workbench $version"
           $zip = "dist\MarketWorkbench-$version-portable-win-x64.zip"
-          gh release create "$tag" "$zip" "$zip.sha256" --repo "${{ github.repository }}" --target "${{ github.sha }}" --title '${{ inputs.title }}' --generate-notes
+          gh release create "$tag" "$zip" "$zip.sha256" --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "$title" --generate-notes

@@ -32,3 +32,9 @@ when updating and copy it into the new MarketWorkbench folder to retain your pre
 Stopped servers can leave SQLite journals behind. Workbench now backs up and
 safely finalizes this state during explicitly confirmed installation. Active
 servers/database viewers still block replacement. Pricing, presets and data are unchanged.
+
+## Maintainer release
+
+After merging a PR and getting a green **CI** check, open **Actions → Build Portable Release → Run workflow**.
+Enter only the new version, for example `1.4.0`. GitHub builds the Windows portable package, verifies its SHA256,
+creates tag `v1.4.0`, and publishes the Release automatically.
