@@ -113,6 +113,27 @@ pub enum Source {
     RareReference,
     SkillbookLadder,
     CommandCenterLadder,
+    /// Operator-supplied absolute quote. The value rides on [`SidePolicy::price`] and
+    /// `multiplier`/`floor` still apply, so a manual price behaves like every other
+    /// reference once resolved.
+    ManualFixed,
+    /// Same-side final quote of the published siblings in the same name family (the
+    /// English item name with a trailing ` (variant)` suffix removed), combined with
+    /// [`SidePolicy::aggregate`]. Falls back from same-groupID to same-marketGroupID
+    /// families. Never invents a price when no sibling resolves.
+    SiblingFamily,
+}
+
+/// How [`Source::SiblingFamily`] combines the sibling quotes it found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Aggregate {
+    /// Cheapest sibling quote.
+    Min,
+    /// Middle quote; the mean of the two middle quotes for an even count.
+    Median,
+    /// Arithmetic mean of the sibling quotes.
+    Mean,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +143,14 @@ pub struct SidePolicy {
     pub multiplier: Decimal,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub floor: Option<Decimal>,
+    /// [`Source::ManualFixed`] only: the absolute quote the operator typed, before
+    /// `multiplier` and `floor` are applied. Required exactly for that source.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price: Option<Decimal>,
+    /// [`Source::SiblingFamily`] only: how the sibling quotes are combined.
+    /// Required exactly for that source.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregate: Option<Aggregate>,
 }
 
 /// Preserve the exact decimal lexeme while validating its finite numeric interpretation.
@@ -411,6 +440,20 @@ fn validate_sides<'a>(
     for side in [sell, buy].into_iter().flatten() {
         let multiplier = side.multiplier.value()?;
         ensure!(multiplier > 0.0, "{context}: multiplier must be positive");
+        ensure!(
+            side.price.is_some() == (side.source == Source::ManualFixed),
+            "{context}: an explicit price is required exactly for the manual_fixed source"
+        );
+        if let Some(price) = &side.price {
+            ensure!(
+                price.value()? > 0.0,
+                "{context}: manual price must be positive"
+            );
+        }
+        ensure!(
+            side.aggregate.is_some() == (side.source == Source::SiblingFamily),
+            "{context}: an aggregate mode is required exactly for the sibling_family source"
+        );
     }
     if let Some(buy) = buy {
         ensure!(
@@ -425,6 +468,8 @@ fn validate_sides<'a>(
                     | Source::CoreManifestCost
                     | Source::CapturedMarket
                     | Source::RareReference
+                    | Source::ManualFixed
+                    | Source::SiblingFamily
             ),
             "{context}: source {:?} cannot price Buy",
             buy.source
@@ -562,6 +607,78 @@ mod tests {
     use super::*;
 
     const MINIMAL: &str = r#"{"format_version":1,"catalog_contract":{"sde_build":3396210,"fact_registry_version":1},"profiles":[{"id":"alpha","sides":"buy_sell","sell":{"source":"funded_cost","multiplier":"1.250"},"buy":{"source":"funded_cost","multiplier":"0.95"}}],"rules":[{"id":"alpha_types","selector":{"type_ids":[2,1]},"priority":10,"profile":"alpha"}]}"#;
+
+    /// A one-rule document with exactly the side objects a test wants to probe.
+    fn document(sides: &str) -> String {
+        format!(
+            r#"{{"format_version":1,"catalog_contract":{{"sde_build":3396210,"fact_registry_version":1}},"profiles":[],"rules":[{{"id":"t","priority":1,"selector":{{"type_ids":[1]}},"sides":"buy_sell",{sides}}}]}}"#
+        )
+    }
+
+    #[test]
+    fn manual_fixed_needs_a_positive_price_and_only_for_that_source() {
+        let sell = r#""sell":{"source":"manual_fixed","multiplier":"1","price":"2500"}"#;
+        let buy = r#""buy":{"source":"manual_fixed","multiplier":"1","price":"2400"}"#;
+        assert!(PolicyDocument::parse(&document(&format!("{sell},{buy}"))).is_ok());
+        assert!(
+            PolicyDocument::parse(&document(&format!(
+                r#""sell":{{"source":"manual_fixed","multiplier":"1"}},{buy}"#
+            )))
+            .is_err(),
+            "manual_fixed without a price must be rejected"
+        );
+        assert!(
+            PolicyDocument::parse(&document(&format!(
+                r#""sell":{{"source":"manual_fixed","multiplier":"1","price":"0"}},{buy}"#
+            )))
+            .is_err(),
+            "a zero manual price must be rejected"
+        );
+        assert!(
+            PolicyDocument::parse(&document(&format!(
+                r#""sell":{{"source":"tq_snapshot","multiplier":"1","price":"10"}},{buy}"#
+            )))
+            .is_err(),
+            "a price on any other source must be rejected"
+        );
+    }
+
+    #[test]
+    fn sibling_family_needs_an_aggregate_and_only_for_that_source() {
+        let sell = r#""sell":{"source":"sibling_family","multiplier":"1","aggregate":"median"}"#;
+        let buy = r#""buy":{"source":"sibling_family","multiplier":"1","aggregate":"min"}"#;
+        assert!(PolicyDocument::parse(&document(&format!("{sell},{buy}"))).is_ok());
+        assert!(
+            PolicyDocument::parse(&document(&format!(
+                r#""sell":{{"source":"sibling_family","multiplier":"1"}},{buy}"#
+            )))
+            .is_err(),
+            "sibling_family without an aggregate mode must be rejected"
+        );
+        assert!(
+            PolicyDocument::parse(&document(&format!(
+                r#""sell":{{"source":"manual_fixed","multiplier":"1","price":"5","aggregate":"min"}},{buy}"#
+            )))
+            .is_err(),
+            "an aggregate on manual_fixed must be rejected"
+        );
+        // The wire names are part of the file format and must not drift.
+        let value: serde_json::Value = serde_json::from_str(&document(&format!("{sell},{buy}"))).unwrap();
+        assert_eq!(value["rules"][0]["sell"]["source"], "sibling_family");
+        assert_eq!(value["rules"][0]["sell"]["aggregate"], "median");
+        assert_eq!(value["rules"][0]["buy"]["aggregate"], "min");
+    }
+
+    #[test]
+    fn manual_price_survives_the_canonical_round_trip() {
+        let text = format!(
+            r#"{{"format_version":1,"catalog_contract":{{"sde_build":3396210,"fact_registry_version":1}},"profiles":[],"rules":[{{"id":"t","priority":1,"selector":{{"type_ids":[1]}},"sides":"sell_only","sell":{{"source":"manual_fixed","multiplier":"1","price":"12345.00"}}}}]}}"#
+        );
+        let first = PolicyDocument::parse(&text).unwrap().canonical_json().unwrap();
+        assert!(first.contains(r#""price": "12345.00""#), "{first}");
+        let second = PolicyDocument::parse(&first).unwrap().canonical_json().unwrap();
+        assert_eq!(first, second);
+    }
 
     #[test]
     fn tq_snapshot_parses_for_independent_sides() {

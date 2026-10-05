@@ -46,6 +46,7 @@ mod snapshot;
 mod staticdata;
 mod tq_snapshot;
 mod workbench;
+mod workbench_attention;
 mod workbench_blueprints;
 mod workbench_families;
 mod workbench_install;

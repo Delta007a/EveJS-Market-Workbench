@@ -1357,7 +1357,7 @@ fn route(app: &App, method: &str, path: &str, query: &str, body: &Value) -> Resu
     }
     if method == "GET" && path == "/api/v1/health" {
         return Ok(
-            json!({"ok":true,"bind":"127.0.0.1","storage":app.storage,"workbench_version":"1.3.2",
+            json!({"ok":true,"bind":"127.0.0.1","storage":app.storage,"workbench_version":"1.3.2+manual-sibling-pricing",
                 "tq_snapshot":{"capture_id":app.tq.capture_id,"captured_at":app.tq.captured_at,"aggregation":app.tq.aggregation}}),
         );
     }
@@ -1463,11 +1463,14 @@ fn route(app: &App, method: &str, path: &str, query: &str, body: &Value) -> Resu
             Source::RareReference,
             Source::SkillbookLadder,
             Source::CommandCenterLadder,
+            Source::ManualFixed,
+            Source::SiblingFamily,
         ];
         return Ok(
             json!({"selector_fields":["type_ids","group_ids","category_ids","fact"],"facts":FACTS,
             "sides":["unseeded","sell_only","buy_only","buy_sell"],"sources":sources,
-            "general_tq_price_sources":["tq_snapshot","tq_snapshot_sell_fallback","tq_snapshot_buy_fallback","tq_average_price","funded_cost","npc_acquisition","t1_variant_sell","t1_variant_buy"]}),
+            "aggregates":["min","median","mean"],
+            "general_tq_price_sources":["tq_snapshot","tq_snapshot_sell_fallback","tq_snapshot_buy_fallback","tq_average_price","funded_cost","npc_acquisition","t1_variant_sell","t1_variant_buy","manual_fixed","sibling_family"]}),
         );
     }
     if method == "GET" && path == "/api/v1/policies" {
@@ -1586,6 +1589,142 @@ fn route(app: &App, method: &str, path: &str, query: &str, body: &Value) -> Resu
             .and_then(Value::as_str)
             .unwrap_or("GENERAL_TQ");
         return app.preview(&policy, preset);
+    }
+    if method == "POST" && path == "/api/v1/attention/export" {
+        let policy = app.draft_policy(body)?;
+        let preset = body
+            .get("preset")
+            .and_then(Value::as_str)
+            .unwrap_or("GENERAL_TQ");
+        let preview = app.preview(&policy, preset)?;
+        let auto_family = body
+            .get("auto_family")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let (csv, rows, auto_filled) =
+            crate::workbench_attention::export_csv(&preview, auto_family)?;
+        return Ok(json!({
+            "filename": if auto_family {
+                "market-workbench-needs-attention-suggested.csv"
+            } else {
+                "market-workbench-needs-attention.csv"
+            },
+            "csv": csv,
+            "sha256": crate::policy_preview::sha256_hex(csv.as_bytes()),
+            "rows": rows,
+            "auto_filled": auto_filled,
+            "columns": crate::workbench_attention::COLUMNS,
+        }));
+    }
+    if method == "POST" && path == "/api/v1/attention/import/preview" {
+        let text = body
+            .get("csv")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing csv text"))?;
+        let (rows, warnings) = crate::workbench_attention::parse_rows(text)?;
+        let known = app
+            .catalog_items()
+            .map(|item| item.type_id)
+            .collect::<BTreeSet<_>>();
+        let mut prepared = 0usize;
+        let mut summaries = Vec::new();
+        for row in &rows {
+            if !row.is_empty() && known.contains(&row.type_id) {
+                prepared += 1;
+            }
+            summaries.push(row.summary());
+        }
+        return Ok(json!({
+            "valid": true,
+            "sha256": crate::policy_preview::sha256_hex(text.as_bytes()),
+            "rows": summaries,
+            "prepared": prepared,
+            "warnings": warnings,
+        }));
+    }
+    if method == "POST" && path == "/api/v1/attention/import" {
+        let text = body
+            .get("csv")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing csv text"))?;
+        let actual = crate::policy_preview::sha256_hex(text.as_bytes());
+        if let Some(expected) = body.get("preview_sha256").and_then(Value::as_str) {
+            ensure!(
+                expected == actual,
+                "the edited file changed after the preview; import it again"
+            );
+        }
+        let (rows, mut warnings) = crate::workbench_attention::parse_rows(text)?;
+        let known = app
+            .catalog_items()
+            .map(|item| item.type_id)
+            .collect::<BTreeSet<_>>();
+        let mut policy = app.draft_policy(body)?;
+        let report = crate::workbench_attention::apply_import(&mut policy, &rows, &known)?;
+        warnings.extend(report.warnings.iter().cloned());
+        let mut payload = report.to_json();
+        payload["warnings"] = json!(warnings);
+        payload["sha256"] = json!(actual);
+        payload["policy"] = serde_json::to_value(&policy)?;
+        return Ok(payload);
+    }
+    if method == "POST" && path == "/api/v1/attention/auto-family" {
+        let mut policy = app.draft_policy(body)?;
+        let preset = body
+            .get("preset")
+            .and_then(Value::as_str)
+            .unwrap_or("GENERAL_TQ");
+        let (sides, only, include_special) = attention_filter(body)?;
+        let filter = crate::workbench_attention::BulkFilter { sides, only: only.as_ref(), include_special };
+        let preview = app.preview(&policy, preset)?;
+        let bulk = crate::workbench_attention::family_rows(&preview, &filter);
+        ensure!(
+            !bulk.rows.is_empty(),
+            "no selected item has a priced item in its name family"
+        );
+        let known = app
+            .catalog_items()
+            .map(|item| item.type_id)
+            .collect::<BTreeSet<_>>();
+        let report = crate::workbench_attention::apply_import(&mut policy, &bulk.rows, &known)?;
+        return Ok(json!({
+            "policy": policy,
+            "report": report.to_json(),
+            "rows": bulk.rows.len(),
+            "skipped_special": bulk.skipped_special,
+            "skipped_no_family": bulk.skipped_no_family,
+        }));
+    }
+    if method == "POST" && path == "/api/v1/attention/auto-manual" {
+        let mut policy = app.draft_policy(body)?;
+        let preset = body
+            .get("preset")
+            .and_then(Value::as_str)
+            .unwrap_or("GENERAL_TQ");
+        let amount = body
+            .get("price")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing the amount to apply"))?;
+        let (sides, only, include_special) = attention_filter(body)?;
+        let filter = crate::workbench_attention::BulkFilter { sides, only: only.as_ref(), include_special };
+        let preview = app.preview(&policy, preset)?;
+        let bulk = crate::workbench_attention::manual_rows(&preview, amount, &filter)?;
+        ensure!(
+            !bulk.rows.is_empty(),
+            "no selected unresolved item to price"
+        );
+        let known = app
+            .catalog_items()
+            .map(|item| item.type_id)
+            .collect::<BTreeSet<_>>();
+        let report = crate::workbench_attention::apply_import(&mut policy, &bulk.rows, &known)?;
+        return Ok(json!({
+            "policy": policy,
+            "report": report.to_json(),
+            "rows": bulk.rows.len(),
+            "skipped_special": bulk.skipped_special,
+            "skipped_no_family": bulk.skipped_no_family,
+        }));
     }
     if method == "POST" && path == "/api/v1/compare" {
         let policy = app.draft_policy(body)?;
@@ -2324,6 +2463,29 @@ fn new_candidate_id(policy_id: &str) -> Result<String> {
         &policy_id[..policy_id.len().min(40)],
         unique_stamp()?
     ))
+}
+
+fn attention_filter(
+    body: &Value,
+) -> Result<(
+    crate::workbench_attention::BulkSides,
+    Option<BTreeSet<u32>>,
+    bool,
+)> {
+    let sides = crate::workbench_attention::BulkSides::parse(
+        body.get("sides").and_then(Value::as_str).unwrap_or(""),
+    )?;
+    let only = body.get("type_ids").and_then(Value::as_array).map(|ids| {
+        ids.iter()
+            .filter_map(Value::as_u64)
+            .map(|id| id as u32)
+            .collect::<BTreeSet<_>>()
+    });
+    let include_special = body
+        .get("include_special")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    Ok((sides, only, include_special))
 }
 
 fn candidate_dir(app: &App, id: &str) -> Result<PathBuf> {

@@ -132,9 +132,19 @@ fn validate_settings(s: &Settings) -> Result<()> {
         ensure!(p.value()? > 0.0, "price percentage must be positive");
     }
     for source in [&s.buy_source, &s.sell_source].into_iter().flatten() {
-        if !["preset", "tq"].contains(&source.as_str()) {
-            serde_json::from_value::<Source>(json!(source))?;
+        if ["preset", "tq"].contains(&source.as_str()) {
+            continue;
         }
+        let parsed: Source = serde_json::from_value(json!(source))?;
+        // These two need a per-item value (an amount, or an aggregation mode), and a whole
+        // group is also the wrong place for the sibling source: most members already carry a
+        // real TQ price that a group-wide rule would replace. Point at the tool that does it.
+        ensure!(
+            !matches!(parsed, Source::ManualFixed | Source::SiblingFamily),
+            "'{source}' cannot be applied to a whole group from here: it needs a per-item value. \
+             Price those items from Needs Attention (Export CSV, then write an amount or \
+             family:median in the set_sell_price / set_buy_price column) or item by item in the item editor."
+        );
     }
     Ok(())
 }
@@ -764,6 +774,8 @@ fn blueprint_side(
         source,
         multiplier: percent_multiplier(&Decimal("1".into()), percent)?,
         floor: None,
+        price: None,
+        aggregate: None,
     }))
 }
 fn side_policy(
@@ -785,6 +797,8 @@ fn side_policy(
             source: Source::FundedCost,
             multiplier: percent_multiplier(&Decimal("1".into()), percent)?,
             floor: None,
+            price: None,
+            aggregate: None,
         }));
     }
     let side = if sell { &base.sell } else { &base.buy };
@@ -793,6 +807,10 @@ fn side_policy(
         source: side.source,
         multiplier: percent_multiplier(&Decimal(side.multiplier_text.clone()), percent)?,
         floor: side.floor_text.clone().map(Decimal),
+        // Copying a preset side must carry its own kind of evidence with it: an explicit
+        // quote for manual_fixed, the combination mode for sibling_family.
+        price: side.price_text.clone().map(Decimal),
+        aggregate: side.aggregate,
     }))
 }
 

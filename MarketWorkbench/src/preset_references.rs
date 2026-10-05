@@ -2,7 +2,7 @@
 //! price arithmetic; linked meta quotes read the final T1 policy, never fuzzy names.
 use crate::classify::Classification;
 use crate::funded::FundedPath;
-use crate::policy::Source;
+use crate::policy::{Aggregate, Source};
 use crate::policy_resolve::{Resolution, ResolvedSide};
 use crate::staticdata::{StaticData, VariantFamilies};
 use crate::tq_snapshot::{Side, TqSnapshot};
@@ -14,8 +14,107 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct References {
     pub npc: BTreeMap<u32, (f64, String)>,
     pub t1_parents: BTreeMap<u32, u32>,
+    /// `Source::SiblingFamily` index: type -> the same-name-family siblings that may
+    /// supply a quote, nearest family first.
+    pub families: BTreeMap<u32, FamilySiblings>,
 }
 pub type Funded = BTreeMap<u32, std::result::Result<FundedPath, String>>;
+
+/// Candidate quote sources for one type: the exact family (same base name **and** same
+/// groupID) and the relaxed one (same base name and marketGroupID).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FamilySiblings {
+    pub exact: Vec<u32>,
+    pub relaxed: Vec<u32>,
+}
+
+/// The family key of a variant name: the English name with a trailing ` (variant)`
+/// suffix removed. CCP's SDE carries no `variationParentTypeID` for apparel colours
+/// (verified against build 3396210), so for those the name is the only authoritative
+/// grouping; requiring a shared groupID keeps unrelated items that merely share words
+/// apart, and the caller relaxes to the marketGroupID only when the exact family has
+/// nothing priceable.
+pub(crate) fn base_name(name: &str) -> Option<&str> {
+    let trimmed = name.trim_end();
+    if !trimmed.ends_with(')') {
+        return None;
+    }
+    let open = trimmed.rfind(" (")?;
+    let base = trimmed[..open].trim_end();
+    (!base.is_empty() && base.len() >= 4).then_some(base)
+}
+
+/// Build the [`Source::SiblingFamily`] index from the published, marketable catalog.
+fn name_families(data: &StaticData) -> BTreeMap<u32, FamilySiblings> {
+    let mut exact: BTreeMap<(&str, u32), Vec<u32>> = BTreeMap::new();
+    let mut relaxed: BTreeMap<(&str, u32), Vec<u32>> = BTreeMap::new();
+    for item in &data.item_types {
+        if !item.is_marketable() {
+            continue;
+        }
+        let Some(base) = base_name(&item.name) else {
+            continue;
+        };
+        if let Some(group) = item.group_id {
+            exact.entry((base, group)).or_default().push(item.type_id);
+        }
+        if let Some(market_group) = item.market_group_id {
+            relaxed
+                .entry((base, market_group))
+                .or_default()
+                .push(item.type_id);
+        }
+    }
+    let mut families = BTreeMap::new();
+    for item in &data.item_types {
+        if !item.is_marketable() {
+            continue;
+        }
+        let Some(base) = base_name(&item.name) else {
+            continue;
+        };
+        let mut siblings = FamilySiblings::default();
+        if let Some(group) = item.group_id {
+            if let Some(members) = exact.get(&(base, group)) {
+                siblings.exact = members
+                    .iter()
+                    .copied()
+                    .filter(|id| *id != item.type_id)
+                    .collect();
+            }
+        }
+        if let Some(market_group) = item.market_group_id {
+            if let Some(members) = relaxed.get(&(base, market_group)) {
+                siblings.relaxed = members
+                    .iter()
+                    .copied()
+                    .filter(|id| *id != item.type_id)
+                    .collect();
+            }
+        }
+        if !siblings.exact.is_empty() || !siblings.relaxed.is_empty() {
+            families.insert(item.type_id, siblings);
+        }
+    }
+    families
+}
+
+/// Combine the sibling quotes a [`Source::SiblingFamily`] side found.
+fn combine_quotes(mode: Aggregate, mut quotes: Vec<f64>) -> f64 {
+    quotes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let middle = quotes.len() / 2;
+    match mode {
+        Aggregate::Min => quotes[0],
+        Aggregate::Mean => quotes.iter().sum::<f64>() / quotes.len() as f64,
+        Aggregate::Median => {
+            if quotes.len() % 2 == 1 {
+                quotes[middle]
+            } else {
+                (quotes[middle - 1] + quotes[middle]) / 2.0
+            }
+        }
+    }
+}
 
 impl References {
     pub fn from_static(
@@ -69,6 +168,7 @@ impl References {
                 }
             }
         }
+        result.families = name_families(data);
         result
     }
 
@@ -152,6 +252,15 @@ impl References {
                         stack,
                     )?)
                 }
+                Source::SiblingFamily => Some(self.sibling_reference(
+                    book,
+                    type_id,
+                    side,
+                    rule,
+                    funded,
+                    resolutions,
+                    stack,
+                )?),
                 _ => None,
             };
             if let Some(reference) = reference {
@@ -166,6 +275,94 @@ impl References {
         })();
         stack.remove(&key);
         result
+    }
+
+    /// Combine the final same-side quotes of the siblings in this type's name family.
+    /// The exact family (same base name and groupID) is tried first; when nothing in it
+    /// resolves, the relaxed family (same base name and marketGroupID) is used. Siblings
+    /// already on the recursion stack are skipped, so a family whose every member asks
+    /// the family for a price fails as unresolved instead of looping.
+    fn sibling_reference(
+        &self,
+        book: &TqSnapshot,
+        type_id: u32,
+        side: Side,
+        rule: &ResolvedSide,
+        funded: &Funded,
+        resolutions: &BTreeMap<u32, Resolution>,
+        stack: &mut BTreeSet<(u32, u8)>,
+    ) -> Result<f64> {
+        Ok(self
+            .sibling_quotes(book, type_id, side, rule, funded, resolutions, stack)?
+            .1)
+    }
+
+    /// The sibling quotes that fed the aggregate, as `(type_id, price)`, plus the combined
+    /// value. Kept separate from [`Self::sibling_reference`] so the traces can show exactly
+    /// which siblings were used - with prices this far apart the operator needs to see them.
+    fn sibling_quotes(
+        &self,
+        book: &TqSnapshot,
+        type_id: u32,
+        side: Side,
+        rule: &ResolvedSide,
+        funded: &Funded,
+        resolutions: &BTreeMap<u32, Resolution>,
+        stack: &mut BTreeSet<(u32, u8)>,
+    ) -> Result<(Vec<(u32, f64)>, f64)> {
+        let mode = rule.aggregate.ok_or_else(|| {
+            anyhow!("type {type_id}: sibling_family side carries no aggregate mode")
+        })?;
+        let family = self.families.get(&type_id).ok_or_else(|| {
+            anyhow!("type {type_id}: no sibling item shares its name family")
+        })?;
+        let side_slot = if side == Side::Sell { 0 } else { 1 };
+        let mut used = Vec::new();
+        for candidates in [&family.exact, &family.relaxed] {
+            let mut values = Vec::new();
+            for sibling in candidates {
+                if *sibling == type_id || stack.contains(&(*sibling, side_slot)) {
+                    continue;
+                }
+                let Some(policy) = resolutions
+                    .get(sibling)
+                    .and_then(|resolution| resolution.policy.as_ref())
+                else {
+                    continue;
+                };
+                let sibling_rule = if side == Side::Sell {
+                    policy.sell.as_ref()
+                } else {
+                    policy.buy.as_ref()
+                };
+                let Some(sibling_rule) = sibling_rule else {
+                    continue;
+                };
+                if let Ok(value) = self.price_inner(
+                    book,
+                    *sibling,
+                    side,
+                    sibling_rule,
+                    funded,
+                    resolutions,
+                    stack,
+                ) {
+                    if value.is_finite() && value > 0.0 {
+                        values.push((*sibling, value));
+                    }
+                }
+            }
+            if !values.is_empty() {
+                used = values;
+                break;
+            }
+        }
+        ensure!(
+            !used.is_empty(),
+            "type {type_id}: no sibling in its name family has a usable {side:?} quote"
+        );
+        let combined = combine_quotes(mode, used.iter().map(|(_, value)| *value).collect());
+        Ok((used, combined))
     }
 
     pub fn trace(&self, id: u32, resolution: &Resolution) -> Option<Value> {
@@ -187,6 +384,14 @@ impl References {
                 json!({"authority":"npc_acquisition","reference":self.npc.get(&id).map(|p|p.0),
                 "provenance":self.npc.get(&id).map(|p|&p.1)}),
             )
+        } else if let Some(side) = [&policy.sell, &policy.buy]
+            .into_iter()
+            .flatten()
+            .find(|side| side.source == Source::SiblingFamily)
+        {
+            Some(json!({"authority":"sibling_name_family","aggregate":side.aggregate,
+                "exact_siblings":self.families.get(&id).map(|f|f.exact.clone()),
+                "relaxed_siblings":self.families.get(&id).map(|f|f.relaxed.clone())}))
         } else {
             None
         }
@@ -219,7 +424,51 @@ impl References {
                 }
             }
         }
+        if let Some(sibling) = self.sibling_trace(id, resolution, book, funded, resolutions) {
+            trace["sibling_family"] = sibling;
+        }
         Some(trace)
+    }
+
+    /// Sibling provenance for the detail view: which siblings were quoted, what each was
+    /// worth, and what the chosen aggregate produced. Sibling prices can differ by orders of
+    /// magnitude, so the operator must be able to see the numbers behind the quote.
+    pub fn sibling_trace(
+        &self,
+        id: u32,
+        resolution: &Resolution,
+        book: &TqSnapshot,
+        funded: &Funded,
+        resolutions: &BTreeMap<u32, Resolution>,
+    ) -> Option<Value> {
+        let policy = resolution.policy.as_ref()?;
+        for (key, side, rule) in [
+            ("sell", Side::Sell, policy.sell.as_ref()),
+            ("buy", Side::Buy, policy.buy.as_ref()),
+        ] {
+            let Some(rule) = rule else { continue };
+            if rule.source != Source::SiblingFamily {
+                continue;
+            }
+            let mut stack = BTreeSet::new();
+            return Some(match self.sibling_quotes(book, id, side, rule, funded, resolutions, &mut stack)
+            {
+                Ok((quotes, combined)) => json!({
+                    "side": key,
+                    "aggregate": rule.aggregate,
+                    // The combined sibling reference, before this side's multiplier and the
+                    // shared cent rounding that produces the final quote.
+                    "reference": combined,
+                    "sibling_count": quotes.len(),
+                    "siblings": quotes.iter().map(|(sibling, value)| json!({
+                        "type_id": sibling,
+                        "price": value,
+                    })).collect::<Vec<_>>(),
+                }),
+                Err(error) => json!({"side": key, "aggregate": rule.aggregate, "unresolved": error.to_string()}),
+            });
+        }
+        None
     }
 }
 
@@ -249,6 +498,17 @@ mod tests {
             multiplier_text: multiplier.to_string(),
             floor: None,
             floor_text: None,
+            price: None,
+            price_text: None,
+            aggregate: None,
+        }
+    }
+
+    /// A `sibling_family` side with the given aggregation mode.
+    fn family_rule(aggregate: Aggregate, multiplier: f64) -> ResolvedSide {
+        ResolvedSide {
+            aggregate: Some(aggregate),
+            ..rule(Source::SiblingFamily, multiplier)
         }
     }
     fn book() -> TqSnapshot {
@@ -258,6 +518,172 @@ mod tests {
             aggregation: "fixture".into(),
             records: BTreeMap::new(),
         }
+    }
+
+    /// Resolve a policy whose rules price the listed types with explicit manual prices.
+    fn resolutions_from_rules(rules: &str) -> BTreeMap<u32, Resolution> {
+        let text = format!(
+            r#"{{"format_version":1,"catalog_contract":{{"sde_build":1,"fact_registry_version":1}},"profiles":[],"rules":[{rules}]}}"#
+        );
+        let policy = PolicyDocument::parse(&text).unwrap();
+        let mut out = BTreeMap::new();
+        for rule in &policy.rules {
+            for id in rule.selector.type_ids.clone().unwrap_or_default() {
+                out.insert(
+                    id,
+                    policy.resolve_validated(id, None, None, &BTreeSet::new()).unwrap(),
+                );
+            }
+        }
+        out
+    }
+
+    fn manual_rules(prices: &[(u32, &str)]) -> String {
+        prices
+            .iter()
+            .map(|(id, price)| {
+                format!(
+                    r#"{{"id":"m{id}","priority":1,"selector":{{"type_ids":[{id}]}},"sides":"sell_only","sell":{{"source":"manual_fixed","multiplier":"1","price":"{price}"}}}}"#
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    #[test]
+    fn manual_fixed_prices_the_side_and_still_applies_the_multiplier() {
+        let resolutions = resolutions_from_rules(&manual_rules(&[(1, "1000")]));
+        let refs = References::default();
+        let mut half = rule(Source::ManualFixed, 0.5);
+        half.price = Some(1000.0);
+        half.price_text = Some("1000".into());
+        assert_eq!(
+            refs.price(&book(), 1, Side::Sell, &half, &Funded::new(), &resolutions)
+                .unwrap(),
+            500.0
+        );
+        // A missing price is a policy defect; the error must say so rather than blaming the
+        // market for having no reference.
+        let error = refs
+            .price(
+                &book(),
+                1,
+                Side::Sell,
+                &rule(Source::ManualFixed, 1.0),
+                &Funded::new(),
+                &resolutions,
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("manual_fixed"), "{error}");
+    }
+
+    #[test]
+    fn sibling_family_combines_the_final_quotes_of_its_family() {
+        // Type 9's exact family holds three priced colours; its relaxed family holds a fourth
+        // that is cheaper, which must NOT leak into the exact result.
+        let resolutions = resolutions_from_rules(&manual_rules(&[
+            (1, "100"),
+            (2, "200"),
+            (3, "400"),
+            (4, "1"),
+        ]));
+        let mut refs = References::default();
+        refs.families.insert(
+            9,
+            FamilySiblings {
+                exact: vec![1, 2, 3],
+                relaxed: vec![4],
+            },
+        );
+        refs.families.insert(
+            10,
+            FamilySiblings {
+                exact: vec![1, 2],
+                relaxed: vec![],
+            },
+        );
+        let price = |id: u32, mode: Aggregate| {
+            refs.price(
+                &book(),
+                id,
+                Side::Sell,
+                &family_rule(mode, 1.0),
+                &Funded::new(),
+                &resolutions,
+            )
+            .unwrap()
+        };
+        assert_eq!(price(9, Aggregate::Min), 100.0);
+        assert_eq!(price(9, Aggregate::Median), 200.0);
+        // 700/3 rounded to the cent by the shared quote arithmetic.
+        assert_eq!(price(9, Aggregate::Mean), 233.33);
+        // An even count takes the mean of the two middle quotes.
+        assert_eq!(price(10, Aggregate::Median), 150.0);
+        // The side's own multiplier still applies to the combined reference.
+        assert_eq!(
+            refs.price(
+                &book(),
+                9,
+                Side::Sell,
+                &family_rule(Aggregate::Min, 2.0),
+                &Funded::new(),
+                &resolutions,
+            )
+            .unwrap(),
+            200.0
+        );
+    }
+
+    #[test]
+    fn sibling_family_reports_an_unpriceable_family_instead_of_looping() {
+        // Two types that can only price each other: the recursion guard must turn this into a
+        // plain "no sibling" error rather than overflowing the stack.
+        let resolutions = resolutions_from_rules(
+            r#"{"id":"a","priority":1,"selector":{"type_ids":[5]},"sides":"sell_only","sell":{"source":"sibling_family","multiplier":"1","aggregate":"min"}},
+               {"id":"b","priority":1,"selector":{"type_ids":[6]},"sides":"sell_only","sell":{"source":"sibling_family","multiplier":"1","aggregate":"min"}}"#,
+        );
+        let mut refs = References::default();
+        refs.families.insert(
+            5,
+            FamilySiblings {
+                exact: vec![6],
+                relaxed: vec![],
+            },
+        );
+        refs.families.insert(
+            6,
+            FamilySiblings {
+                exact: vec![5],
+                relaxed: vec![],
+            },
+        );
+        let error = refs
+            .price(
+                &book(),
+                5,
+                Side::Sell,
+                &family_rule(Aggregate::Min, 1.0),
+                &Funded::new(),
+                &resolutions,
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("no sibling"), "{error}");
+
+        // No family at all is also an error, never a zero price.
+        let lonely = refs
+            .price(
+                &book(),
+                5,
+                Side::Sell,
+                &family_rule(Aggregate::Min, 1.0),
+                &Funded::new(),
+                &resolutions_from_rules(&manual_rules(&[])),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(lonely.contains("no sibling"), "{lonely}");
     }
     #[test]
     fn npc_eligibility_no_trade_fallback() {
