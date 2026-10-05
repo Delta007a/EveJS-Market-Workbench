@@ -1855,9 +1855,11 @@ fn diagnostic_assignment(policy: &ResolvedItemPolicy) -> Result<MarketAssignment
         | PolicySource::TqSnapshotBuyFallback
         | PolicySource::TqAveragePrice => MarketRole::Core,
         PolicySource::FundedCost => MarketRole::ProductionIntermediate,
-        PolicySource::NpcAcquisition | PolicySource::T1VariantSell | PolicySource::T1VariantBuy => {
-            MarketRole::Core
-        }
+        PolicySource::NpcAcquisition
+        | PolicySource::T1VariantSell
+        | PolicySource::T1VariantBuy
+        | PolicySource::ManualFixed
+        | PolicySource::SiblingFamily => MarketRole::Core,
         PolicySource::CoreManifestCost => MarketRole::Core,
         PolicySource::CapturedMarket => MarketRole::Bridge,
         PolicySource::NpcMinSell => MarketRole::ProgressionNpc,
@@ -1896,7 +1898,11 @@ fn resolve_v2_source(
         .item_type(type_id)
         .ok_or_else(|| anyhow::anyhow!("source resolution missing type {type_id}"))?;
     let result = match source {
-        PolicySource::NpcAcquisition | PolicySource::T1VariantSell | PolicySource::T1VariantBuy => {
+        PolicySource::NpcAcquisition
+        | PolicySource::T1VariantSell
+        | PolicySource::T1VariantBuy
+        | PolicySource::ManualFixed
+        | PolicySource::SiblingFamily => {
             bail!("type {type_id}: this source requires the Workbench GENERAL_TQ quote context");
         }
         PolicySource::TqSnapshot

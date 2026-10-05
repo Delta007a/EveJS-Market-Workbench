@@ -8,7 +8,8 @@
   const labels = {tq_snapshot:'TQ Market Prices',tq_snapshot_sell_fallback:'TQ Sell reference',tq_snapshot_buy_fallback:'TQ Buy reference',
     tq_average_price:'TQ average',funded_cost:'Production Cost',npc_acquisition:'NPC Acquisition Reference',t1_variant_sell:'T1 family Sell price',t1_variant_buy:'T1 family Buy price',core_manifest_cost:'Preset resource reference',captured_market:'Captured market reference',
     npc_min_sell:'NPC minimum Sell',bpo_npc_or_base:'Blueprint reference price',rare_reference:'Item reference price',
-    skillbook_ladder:'Skillbook reference price',command_center_ladder:'Command center reference price'};
+    skillbook_ladder:'Skillbook reference price',command_center_ladder:'Command center reference price',
+    manual_fixed:'Manual price (ISK)',sibling_family:'Similar item price (name family)'};
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const number = value => value == null || value === '' ? '—' : typeof value === 'number' ? new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(value) : String(value);
   const price = value => value == null ? '—' : Number(value).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -183,14 +184,26 @@
       key==='CROSSED_REFERENCE'?'Review the conflicting Buy and Sell evidence':
       key==='ROUNDING_CROSS'?'Review the price percentages and rounding':'Open item details to review its pricing';
   }
+  // Exactly the rows the review table is showing: unresolved, narrowed by the reason filter.
+  // The bulk buttons work on this list, so the table and the actions can never disagree.
+  function attentionRows(){
+    return (state.preview?.items||[]).filter(item=>item.unresolved_reason)
+      .filter(item=>!$('reasonFilter').value||reason(item)===$('reasonFilter').value);
+  }
+  // A missing price is correct for these, so they are left alone unless the operator opts in.
+  const pricedByDesign = item => /^Deprecated/i.test(item.name||'')||Boolean(item.blueprint);
   function renderUnresolved(){
     const all=(state.preview?.items||[]).filter(item=>item.unresolved_reason);
     const counts={NO_TQ_REFERENCE:0,CROSSED_REFERENCE:0,ROUNDING_CROSS:0,other:0};
     for(const item of all)counts[reason(item)]++;
     const names={NO_TQ_REFERENCE:'No TQ price found',CROSSED_REFERENCE:'TQ Buy above Sell',ROUNDING_CROSS:'Equal after rounding',other:'Other pricing issues'};
     $('reasonCards').innerHTML=Object.entries(counts).map(([key,value])=>`<button class="reason-card ${$('reasonFilter').value===key?'active':''}" data-reason="${key}"><strong>${number(value)}</strong><span>${names[key]}</span></button>`).join('');
-    const shown=all.filter(item=>!$('reasonFilter').value||reason(item)===$('reasonFilter').value);
+    const shown=attentionRows();
     $('reviewCount').textContent=`${number(shown.length)} items to review`;
+    const skipped=shown.filter(pricedByDesign).length;
+    $('attentionScope').textContent=$('attentionIncludeSpecial').checked
+      ?'actions apply to all of them'
+      :`actions apply to ${number(shown.length-skipped)} of them (${number(skipped)} deprecated/blueprint skipped)`;
     $('unresolvedBody').innerHTML=shown.map(item=>`<tr class="clickable" data-type="${esc(dataId(item))}"><td><span class="item-name">${esc(item.name)}</span></td><td>${esc(item.category_name||'Other')}<span class="secondary">${esc(item.group_name||'—')}</span></td><td><span class="badge warn">${esc(reasonLabel(item))}</span></td><td>${esc(item.tq?.average_price?'Average price available':'Open evidence')}</td><td>${esc(nextStep(reason(item)))}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">No items in this review group.</td></tr>';
   }
   function selectorLabel(selector={}){
@@ -253,6 +266,16 @@
   function setSide(side,value){
     $(side+'Source').value=allowedSources().includes(value?.source)?value.source:(allowedSources()[0]||'');
     $(side+'Multiplier').value=String(value?.multiplier_text??value?.multiplier??'1.00');
+    $(side+'ManualPrice').value=String(value?.price_text??value?.price??'');
+    $(side+'Aggregate').value=value?.aggregate||'median';
+    updateSideFields(side);
+  }
+  // `manual_fixed` carries an absolute price and `sibling_family` an aggregation mode; the
+  // matching input stays visible exactly when its source is selected.
+  function updateSideFields(side){
+    const source=$(side+'Source').value;
+    $(side+'ManualField').classList.toggle('hidden',source!=='manual_fixed');
+    $(side+'AggregateField').classList.toggle('hidden',source!=='sibling_family');
   }
   function updateEditorVisibility(){
     const mode=state.editor?.kind;
@@ -269,6 +292,7 @@
     const buy=$('availability').value==='buy_only'||$('availability').value==='buy_sell';
     $('sellSource').closest('.side-editor').classList.toggle('hidden',!sell);
     $('buySource').closest('.side-editor').classList.toggle('hidden',!buy);
+    updateSideFields('sell');updateSideFields('buy');
   }
   function openEditor(kind,index=null){
     if(!state.policy||state.busy||state.loadingPreset)return;if(builtIn())return notice('Choose Edit a Copy before changing the preset.');
@@ -313,7 +337,29 @@
     const used=state.policy.rules.filter(r=>r.profile===profile.id).length;$('editorMatch').textContent=`Used by ${used} rule${used===1?'':'s'}.`;
   }
   function slug(value){const s=String(value).toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,46)||'rule';return /^[a-z]/.test(s)?s:'rule_'+s;}
-  function sideValue(side){return {source:$(side+'Source').value,multiplier:$(side+'Multiplier').value.trim()};}
+  function sideValue(side){
+    const source=$(side+'Source').value,value={source,multiplier:$(side+'Multiplier').value.trim()};
+    if(source==='manual_fixed')value.price=$(side+'ManualPrice').value.trim();
+    if(source==='sibling_family')value.aggregate=$(side+'Aggregate').value;
+    return value;
+  }
+  // The resolver ranks every exact-type `unseeded` rule ahead of the priority sort, so an
+  // explicit price only takes effect once that exclusion stops listing the type. Giving an
+  // item a price is the operator saying "put it on the market", so drop it from the guard.
+  function admitTypes(ids){
+    const targets=new Set([].concat(ids).map(Number).filter(Number.isInteger));
+    if(!targets.size)return 0;
+    let removed=0;
+    state.policy.rules=state.policy.rules.filter(rule=>{
+      if(rule.sides!=='unseeded'||!Array.isArray(rule.selector?.type_ids))return true;
+      const kept=rule.selector.type_ids.filter(id=>!targets.has(Number(id)));
+      removed+=rule.selector.type_ids.length-kept.length;
+      if(!kept.length)return false;
+      rule.selector.type_ids=kept;
+      return true;
+    });
+    return removed;
+  }
   async function applyEditor(event){
     event.preventDefault();
     const kind=state.editor?.kind,index=state.editor?.index,availability=$('availability').value;
@@ -329,15 +375,22 @@
       return;
     }
     let target;
+    let lifted=0;
+    let renamed='';
     if(kind==='profile'){
-      const name=$('profileName').value.trim();
-      if(!name||state.policy.profiles.some((p,i)=>i!==index&&p.id===name))return notice('Profile name is empty or already used.',true);
+      const typed=$('profileName').value.trim();
+      // A profile id is a stable snake_case identifier that the policy validates, and the UI
+      // renders it title-cased ("manual_prices" -> "Manual Prices"), so a friendly name is
+      // slugged exactly like a rule name instead of being rejected as an invalid ID.
+      const name=slug(typed);
+      if(!typed||state.policy.profiles.some((p,i)=>i!==index&&p.id===name))return notice('Profile name is empty or already used.',true);
       target=index==null?{id:name}:state.policy.profiles[index];
       const old=target.id;target.id=name;target.sides=availability;
       if(availability==='sell_only'||availability==='buy_sell')target.sell=sideValue('sell');else delete target.sell;
       if(availability==='buy_only'||availability==='buy_sell')target.buy=sideValue('buy');else delete target.buy;
       if(index==null)state.policy.profiles.push(target);
       if(old!==name)for(const rule of state.policy.rules)if(rule.profile===old)rule.profile=name;
+      if(name!==typed)renamed=` Stored as profile “${name}” (ids are lower_snake_case); it displays as “${title(name)}”.`;
     }else{
       const field=$('selectorKind').value,raw=$('selectorValue').value.trim(),name=$('ruleName').value.trim();
       if(!name)return notice('Rule name is required.',true);
@@ -354,8 +407,11 @@
       else{delete target.profile;if(availability==='sell_only'||availability==='buy_sell')target.sell=sideValue('sell');else delete target.sell;
         if(availability==='buy_only'||availability==='buy_sell')target.buy=sideValue('buy');else delete target.buy;}
       if(index==null)state.policy.rules.push(target);
+      // A priced exact-type rule is useless while an exact unseeded guard still lists the type.
+      if(availability!=='unseeded'&&field==='type_ids')lifted=admitTypes(values);
     }
-    $('editorDialog').close();markDirty();await syncQuick();renderRules();renderProfiles();notice(`${kind==='profile'?'Profile':'Rule'} applied to the browser draft. Preview and compare before saving.`);
+    $('editorDialog').close();markDirty();await syncQuick();renderRules();renderProfiles();
+    notice(`${kind==='profile'?'Profile':'Rule'} applied to the browser draft.${lifted?` ${number(lifted)} preset exclusion(s) lifted so the price can take effect.`:''}${renamed} Preview and compare before saving.`);
     previewData(false);
   }
   async function validate(){
@@ -399,7 +455,7 @@
   }
   async function openSaved(){
     try{const response=await api('/policies'),saved=(response.policies||[]).filter(x=>!x.preset);
-      $('savedPolicySelect').innerHTML=saved.map(x=>`<option value="${esc(x.id)}">${esc(x.display_name||x.id)}</option>`).join('');
+      $('savedPolicySelect').innerHTML=saved.map(x=>`<option value="${esc(x.id)}">${esc(x.display_name||x.id)}${x.display_name?` (${esc(x.id)})`:''}</option>`).join('');
       if(!saved.length)return notice('No saved custom policies yet.');
       $('savedDialog').showModal();
     }catch(error){notice(`Saved policies unavailable: ${error.message}`,true);}
@@ -407,7 +463,13 @@
   async function openSave(){
     if(builtIn())return notice('Choose Edit a Copy to create your own preset.');
     const validation=await validate();if(!validation?.valid)return notice('Fix the pricing errors before saving.',true);
-    $('saveId').value=state.displayName;$('saveDescription').value=state.description;$('saveAuthor').value=state.author;$('saveOverwrite').checked=false;$('saveDialog').showModal();
+    $('saveId').value=state.displayName;$('saveDescription').value=state.description;$('saveAuthor').value=state.author;$('saveOverwrite').checked=false;
+    // The display name is renameable; the stable ID is what names the policy file and every
+    // candidate built from it, so show it rather than let a rename look like a new preset.
+    $('saveIdHint').textContent=state.isNew
+      ?`Stable ID ${state.loadedId} - the saved file and every database built from it use that prefix.`
+      :`Stable ID ${state.loadedId||'(built-in preset)'} - renaming here keeps it; use Edit a Copy to get a new ID.`;
+    $('saveDialog').showModal();
   }
   async function savePolicy(event){
     event.preventDefault();if(builtIn())return;
@@ -866,8 +928,112 @@
     };
   }
 
+  // "Needs attention" round-trip: export the unresolved items as CSV, let the operator fill
+  // set_sell_price / set_buy_price in a spreadsheet, then turn the edited file into explicit
+  // manual prices (lifting the preset exclusions that would otherwise outrank them).
+  function bindAttention(){
+    $('sellSource').onchange=()=>updateSideFields('sell');
+    $('buySource').onchange=()=>updateSideFields('buy');
+    let draft=null;
+    const reset=()=>{draft=null;$('attentionApply').disabled=true;$('attentionStatus').textContent='';$('attentionFile').value='';};
+    const exportList=async(autoFamily)=>{
+      if(!state.policy||state.busy)return;
+      state.busy=true;refreshChrome();$('attentionStatus').textContent=autoFamily?'Building the list with family suggestions…':'Building the list…';
+      try{
+        const result=await post('/attention/export',{policy:state.policy,preset:state.preset,auto_family:autoFamily});
+        const url=URL.createObjectURL(new Blob([result.csv],{type:'text/csv;charset=utf-8'}));
+        const link=document.createElement('a');link.href=url;link.download=result.filename;document.body.append(link);link.click();link.remove();
+        setTimeout(()=>URL.revokeObjectURL(url),10000);
+        $('attentionStatus').textContent=autoFamily
+          ?`Exported ${number(result.rows)} item(s); ${number(result.auto_filled)} already carry family:median because their name family has a priced item. Import the file back to apply them, or edit any row first.`
+          :`Exported ${number(result.rows)} item(s). In the set_sell_price / set_buy_price columns write an amount, or family:min / family:median / family:mean to borrow the price from similar items; then import the file back.`;
+      }catch(error){$('attentionStatus').textContent=`Export failed: ${error.message}`;}
+      finally{state.busy=false;refreshChrome();}
+    };
+    $('attentionExport').onclick=()=>exportList(false);
+    $('attentionExportFamily').onclick=()=>exportList(true);
+    // The two bulk actions work on the rows the table is showing (same helper the table uses),
+    // skip the items whose missing price is correct, and honour the chosen sides.
+    const bulkTargets=()=>{
+      const shown=attentionRows();
+      const includeSpecial=$('attentionIncludeSpecial').checked;
+      return includeSpecial?shown:shown.filter(item=>!pricedByDesign(item));
+    };
+    const bulk=async(kind,amount)=>{
+      if(!state.policy||state.busy)return;
+      const targets=bulkTargets();
+      if(!targets.length){$('attentionStatus').textContent='Nothing to price in the current selection.';return;}
+      state.busy=true;refreshChrome();
+      $('attentionStatus').textContent=kind==='manual'?'Applying one price to the listed items…':'Pricing from similar items…';
+      try{
+        const body={policy:state.policy,preset:state.preset,
+          type_ids:targets.map(dataId).filter(Boolean),
+          sides:$(kind==='manual'?'attentionManualSides':'attentionFamilySides').value,
+          include_special:$('attentionIncludeSpecial').checked};
+        if(kind==='manual')body.price=amount;
+        const result=await post(kind==='manual'?'/attention/auto-manual':'/attention/auto-family',body);
+        const lifted=(result.report.exclusions_lifted||[]).reduce((sum,entry)=>sum+Number(entry.removed||0),0);
+        const untouched=(result.skipped_no_family||0)+(result.skipped_special||0);
+        state.policy=result.policy;markDirty();await syncQuick();await previewData(false);
+        $('attentionStatus').textContent=`${number(result.report.applied)} item(s) updated`
+          +`${lifted?`, ${number(lifted)} preset exclusion(s) lifted`:''}`
+          +`${untouched?`, ${number(untouched)} left alone (no priced sibling or no price by design)`:''}`
+          +'. Nothing is saved yet.';
+      }catch(error){
+        const message=/no selected item has a priced item/.test(error.message)
+          ?'Nothing to do: none of the listed items has a priced item in its name family, so they need a manual amount.'
+          :/no selected unresolved item/.test(error.message)
+            ?'Nothing to do: the listed items already have prices.'
+            :`Nothing was changed: ${error.message}`;
+        $('attentionStatus').textContent=message;
+      }
+      finally{state.busy=false;refreshChrome();}
+    };
+    $('attentionAutoFamily').onclick=()=>{
+      const targets=bulkTargets();
+      if(!window.confirm(`Price ${targets.length} listed item(s) from similar items? Items whose name family has no priced item stay off the market.`))return;
+      bulk('family');
+    };
+    $('attentionAutoManual').onclick=()=>{
+      const amount=$('attentionBulkPrice').value.trim();
+      if(!amount)return notice('Type the ISK amount in the box above first.',true);
+      const targets=bulkTargets();
+      if(!window.confirm(`Put the ${targets.length} listed item(s) on the market with a price of ${amount} ISK? Every one of them gets the same amount.`))return;
+      bulk('manual',amount);
+    };
+    $('attentionIncludeSpecial').onchange=()=>renderUnresolved();
+    $('attentionImportPick').onclick=()=>{reset();$('attentionFile').click();};
+    $('attentionFile').onchange=async()=>{
+      const file=$('attentionFile').files[0];if(!file)return;
+      $('attentionStatus').textContent='Reading the edited file…';
+      try{
+        if(file.size>4*1024*1024)throw new Error('The price file exceeds the 4 MiB import limit.');
+        const csv=await file.text();
+        const result=await post('/attention/import/preview',{csv});
+        draft={csv,sha256:result.sha256};
+        const ready=(result.rows||[]).filter(row=>row.action==='apply');
+        const warnings=result.warnings||[];
+        $('attentionApply').disabled=!ready.length;
+        $('attentionStatus').textContent=ready.length
+          ? `${number(ready.length)} row(s) ready to apply${warnings.length?` · ${number(warnings.length)} warning(s): ${warnings.slice(0,2).join('; ')}`:''}`
+          : `No row carried a price.${warnings.length?` ${warnings.slice(0,2).join('; ')}`:''}`;
+      }catch(error){reset();$('attentionStatus').textContent=`Import unavailable: ${error.message}`;}
+    };
+    $('attentionApply').onclick=async()=>{
+      if(!draft||state.busy)return;
+      state.busy=true;refreshChrome();$('attentionApply').disabled=true;$('attentionStatus').textContent='Applying…';
+      try{
+        const result=await post('/attention/import',{csv:draft.csv,preview_sha256:draft.sha256,policy:state.policy,preset:state.preset});
+        const applied=result.applied,lifted=(result.exclusions_lifted||[]).reduce((sum,entry)=>sum+Number(entry.removed||0),0);
+        state.policy=result.policy;markDirty();reset();await syncQuick();await previewData(false);
+        notice(`Imported explicit prices for ${number(applied)} item(s)${lifted?` and lifted ${number(lifted)} preset exclusion(s)`:''}. Preview updated; nothing is saved or built yet.`);
+      }catch(error){$('attentionStatus').textContent=`Import failed: ${error.message}`;$('attentionApply').disabled=false;}
+      finally{state.busy=false;refreshChrome();}
+    };
+  }
+
   async function init(){
-    bind();bindSimple();bindBlueprints();bindPortable();refreshChrome();
+    bind();bindSimple();bindBlueprints();bindPortable();bindAttention();refreshChrome();
     try{const health=await api('/health');$('apiStatus').textContent=health.ok?'● Connected · 127.0.0.1':'Backend unavailable';$('apiStatus').classList.toggle('offline',!health.ok);}
     catch(error){$('apiStatus').textContent='Backend offline';$('apiStatus').classList.add('offline');notice(`Cannot connect to local Workbench: ${error.message}`,true);return;}
     bindDistribution();

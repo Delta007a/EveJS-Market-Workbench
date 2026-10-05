@@ -64,11 +64,19 @@ pub(crate) fn price_with_funded(
         rule.floor.is_none(),
         "GENERAL_TQ type {type_id}: policy floor is unsupported"
     );
-    let reference = (if rule.source == Source::FundedCost {
-        funded_cost
-    } else {
-        book.policy_reference(type_id, side, rule.source)
-    })
+    let reference = match rule.source {
+        Source::FundedCost => funded_cost,
+        // The operator's own absolute quote needs no external reference. A missing value
+        // is a policy defect rather than missing market data, so it says so.
+        Source::ManualFixed => Some(rule.price.ok_or_else(|| {
+            anyhow::anyhow!("GENERAL_TQ type {type_id}: manual_fixed side carries no price")
+        })?),
+        // Resolved from the sibling family in `preset_references`, never from the book.
+        Source::SiblingFamily => {
+            anyhow::bail!("GENERAL_TQ type {type_id}: sibling_family quote was not resolved")
+        }
+        _ => book.policy_reference(type_id, side, rule.source),
+    }
     .ok_or_else(|| {
         anyhow::anyhow!(
             "GENERAL_TQ type {type_id}: {:?} {:?} unavailable",
@@ -352,7 +360,10 @@ pub(crate) fn run_with_facts(
         .any(|s| {
             matches!(
                 s.source,
-                Source::NpcAcquisition | Source::T1VariantSell | Source::T1VariantBuy
+                Source::NpcAcquisition
+                    | Source::T1VariantSell
+                    | Source::T1VariantBuy
+                    | Source::SiblingFamily
             )
         });
     let references = if needs_preset_references {

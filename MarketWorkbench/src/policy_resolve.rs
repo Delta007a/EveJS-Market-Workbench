@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Result, bail, ensure};
 use serde::Serialize;
 
-use crate::policy::{PolicyDocument, Rule, Selector, SidePolicy, Sides, Source};
+use crate::policy::{Aggregate, PolicyDocument, Rule, Selector, SidePolicy, Sides, Source};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ResolvedSide {
@@ -15,6 +15,13 @@ pub struct ResolvedSide {
     pub multiplier_text: String,
     pub floor: Option<f64>,
     pub floor_text: Option<String>,
+    /// The operator's absolute quote for `Source::ManualFixed`, before multiplier/floor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub price: Option<f64>,
+    pub price_text: Option<String>,
+    /// How `Source::SiblingFamily` combines its sibling quotes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregate: Option<Aggregate>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -40,6 +47,10 @@ fn sides_equal(a: &Option<ResolvedSide>, b: &Option<ResolvedSide>) -> bool {
             a.source == b.source
                 && a.multiplier.to_bits() == b.multiplier.to_bits()
                 && a.floor.map(f64::to_bits) == b.floor.map(f64::to_bits)
+                // A manual price and a sibling aggregation mode are part of the side's
+                // meaning: two equal-rank rules differing only there are ambiguous, not equal.
+                && a.price.map(f64::to_bits) == b.price.map(f64::to_bits)
+                && a.aggregate == b.aggregate
         }
         _ => false,
     }
@@ -457,6 +468,9 @@ fn resolve_side(side: &SidePolicy) -> Result<ResolvedSide> {
         multiplier_text: side.multiplier.0.clone(),
         floor: side.floor.as_ref().map(|v| v.value()).transpose()?,
         floor_text: side.floor.as_ref().map(|v| v.0.clone()),
+        price: side.price.as_ref().map(|v| v.value()).transpose()?,
+        price_text: side.price.as_ref().map(|v| v.0.clone()),
+        aggregate: side.aggregate,
     })
 }
 
@@ -469,6 +483,26 @@ mod tests {
             r#"{{"format_version":1,"catalog_contract":{{"sde_build":1,"fact_registry_version":1}},"profiles":[{{"id":"seeded","sides":"sell_only","sell":{{"source":"captured_market","multiplier":"1.0"}}}},{{"id":"other","sides":"buy_only","buy":{{"source":"rare_reference","multiplier":"0.5"}}}}],"rules":[{rules}]}}"#
         );
         PolicyDocument::parse(&json).unwrap()
+    }
+
+    #[test]
+    fn equal_rank_rules_differing_only_by_manual_price_are_ambiguous() {
+        // Two exact-type rules at the same priority that disagree about the price must not
+        // silently pick one: the second would otherwise be dropped from the comparison.
+        let ambiguous = document(
+            r#"{"id":"a","selector":{"type_ids":[42]},"priority":5,"sides":"sell_only","sell":{"source":"manual_fixed","multiplier":"1","price":"100"}},{"id":"b","selector":{"type_ids":[42]},"priority":5,"sides":"sell_only","sell":{"source":"manual_fixed","multiplier":"1","price":"200"}}"#,
+        );
+        assert!(
+            ambiguous.resolve(42, None, None, &BTreeSet::new()).is_err(),
+            "equal-rank rules with different manual prices must be rejected as ambiguous"
+        );
+
+        // The same two rules agreeing on the price are fine.
+        let agreed = document(
+            r#"{"id":"a","selector":{"type_ids":[42]},"priority":5,"sides":"sell_only","sell":{"source":"manual_fixed","multiplier":"1","price":"100"}},{"id":"b","selector":{"type_ids":[42]},"priority":5,"sides":"sell_only","sell":{"source":"manual_fixed","multiplier":"1","price":"100"}}"#,
+        );
+        let resolution = agreed.resolve(42, None, None, &BTreeSet::new()).unwrap();
+        assert_eq!(resolution.policy.unwrap().sell.unwrap().price, Some(100.0));
     }
 
     #[test]
