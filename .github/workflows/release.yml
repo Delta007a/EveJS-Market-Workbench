@@ -60,7 +60,7 @@ jobs:
 
       - name: Rust tests
         working-directory: MarketWorkbench
-        run: cargo test --locked --release -- --skip seedplan::tests::
+        run: 'cargo test --locked --release -- --skip seedplan::tests::'
 
       - name: Frontend syntax
         run: node --check MarketWorkbench/workbench-ui/app.js
