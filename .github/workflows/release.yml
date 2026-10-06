@@ -39,8 +39,9 @@ jobs:
           }
 
       - name: Rust format
+        continue-on-error: true
         working-directory: MarketWorkbench
-        run: cargo fmt
+        run: cargo fmt --check
 
       - name: Rust build
         working-directory: MarketWorkbench
