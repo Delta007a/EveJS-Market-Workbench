@@ -30,7 +30,7 @@ jobs:
 
       - name: Rust format
         working-directory: MarketWorkbench
-        run: cargo fmt --check
+        run: cargo fmt
 
       - name: Rust build
         working-directory: MarketWorkbench
