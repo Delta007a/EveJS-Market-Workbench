@@ -787,7 +787,12 @@ mod tests {
     fn preview_uses_server_workdir_and_does_not_create_destination() {
         let f = Fixture::new();
         let p = f.preview();
-        assert_eq!(p["database_path"], display(&f.db));
+        let expected = display(
+            &fs::canonicalize(&f.root)
+                .unwrap()
+                .join("externalservices/market-server/data/generated/market.sqlite"),
+        );
+        assert_eq!(p["database_path"], expected);
         assert_eq!(p["replaces_existing"], false);
         assert!(!f.db.parent().unwrap().exists());
         assert_eq!(
@@ -1211,7 +1216,8 @@ mod tests {
         )
         .unwrap();
         let p = f.preview();
-        assert_eq!(p["database_path"], path);
+        let expected = display(&fs::canonicalize(&f.root).unwrap().join("data/custom.sqlite"));
+        assert_eq!(p["database_path"], expected);
     }
     #[test]
     fn existing_installer_lock_preserves_database() {
